@@ -76,7 +76,7 @@
 }
 
 .leaflet-tile {
-  filter: brightness(0.7) invert(1) contrast(3) hue-rotate(200deg) saturate(0.35) !important;
+  filter: brightness(0.86) saturate(0.8) contrast(1.12) !important;
 }
 
 .leaflet-control-zoom {

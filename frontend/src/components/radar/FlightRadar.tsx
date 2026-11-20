@@ -172,11 +172,12 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
       // 2. Airport Custom DivIcon
       const tierColor =
         apt.tier === 'mega_hub' ? '#00f0ff' : apt.tier === 'regional_hub' ? '#38bdf8' : '#94a3b8';
+      const markerColor = isClosed ? '#ef4444' : isSelected ? '#00f0ff' : tierColor;
       const statusBorder = isClosed
-        ? 'border-occ-red shadow-red-sm animate-pulse'
+        ? 'animate-pulse'
         : isSelected
-        ? 'border-occ-cyan shadow-cyan-sm ring-2 ring-occ-cyan'
-        : 'border-slate-700';
+        ? 'ring-2 ring-occ-cyan'
+        : '';
 
       const iconHtml = `
         <div class="relative flex flex-col items-center cursor-pointer group select-none">
@@ -185,7 +186,8 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
               ? `<div class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-ping"></div>`
               : ''
           }
-          <div class="w-7 h-7 rounded-lg bg-navy-900 border ${statusBorder} flex items-center justify-center transition-transform hover:scale-110">
+          <div class="w-8 h-8 rounded-lg bg-navy-900/95 border-2 ${statusBorder} flex items-center justify-center transition-transform hover:scale-110"
+            style="border-color:${markerColor};box-shadow:0 0 12px ${markerColor}55;">
             <span class="text-[10px] font-mono font-extrabold ${isClosed ? 'text-occ-red' : isSelected ? 'text-occ-cyan' : 'text-white'}">
               ${apt.id}
             </span>
@@ -241,9 +243,9 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
         points.push(interpolatePosition(origApt.lat, origApt.lng, destApt.lat, destApt.lng, i / steps));
       }
 
-      let routeColor = '#1e293b';
-      let routeWeight = 1;
-      let routeOpacity = 0.3;
+      let routeColor = '#52749f';
+      let routeWeight = 1.4;
+      let routeOpacity = 0.52;
 
       if (isSelected) {
         routeColor = '#00f0ff';
@@ -259,10 +261,19 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
         routeOpacity = 0.55;
       }
 
+      routesGroup.addLayer(L.polyline(points, {
+        color: '#06101e',
+        weight: routeWeight + 2.5,
+        opacity: 0.9,
+        interactive: false,
+      }));
+
       const polyline = L.polyline(points, {
         color: routeColor,
         weight: routeWeight,
         opacity: routeOpacity,
+        lineCap: 'round',
+        lineJoin: 'round',
         dashArray: isSelected ? undefined : flight.status === 'SEVERELY_DELAYED' ? '4, 4' : undefined,
       });
 
