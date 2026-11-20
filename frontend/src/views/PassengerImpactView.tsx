@@ -150,11 +150,12 @@ export const PassengerImpactView: React.FC = () => {
 
           {/* Hub filter */}
           <div className="flex items-center gap-1.5 text-xs text-slate-400 pl-2">
-            <Building2 className="w-3.5 h-3.5" />
+            <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
             <select
               value={selectedHub}
               onChange={(e) => setSelectedHub(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-200 text-xs focus:outline-none focus:border-cyan-500"
+              aria-label="Filter connection banks by hub airport"
+              className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-200 text-xs focus:outline-none focus:border-cyan-500 focus-visible:ring-2 focus-visible:ring-cyan-400"
             >
               {hubs.map((h) => (
                 <option key={h} value={h}>
@@ -167,13 +168,14 @@ export const PassengerImpactView: React.FC = () => {
 
         {/* Search input */}
         <div className="relative w-full sm:w-64">
-          <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+          <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" aria-hidden="true" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label="Search passenger connections by flight ID, bank ID, or hub"
             placeholder="Search flight, bank ID, hub..."
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-cyan-500 focus-visible:ring-2 focus-visible:ring-cyan-400"
           />
         </div>
       </div>

@@ -83,25 +83,39 @@ export const TopHeader: React.FC = () => {
       <div className="flex items-center gap-2.5">
         {/* Scenario Preset Selector */}
         <div className="relative group">
-          <div className="flex items-center gap-1.5 bg-navy-850 hover:bg-navy-800 border border-occ-border rounded-lg px-3 py-1.5 text-xs transition-colors cursor-pointer">
-            <Layers className="w-3.5 h-3.5 text-occ-cyan" />
+          <button
+            type="button"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-label={`Current Scenario: ${currentPreset?.name || 'Custom Disruption'}. Select to change scenario.`}
+            className="flex items-center gap-1.5 bg-navy-850 hover:bg-navy-800 border border-occ-border rounded-lg px-3 py-1.5 text-xs transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none"
+          >
+            <Layers className="w-3.5 h-3.5 text-occ-cyan" aria-hidden="true" />
             <span className="text-slate-400 font-medium">Scenario:</span>
             <span className="text-white font-semibold max-w-[170px] truncate">
               {currentPreset?.name || 'Custom Disruption'}
             </span>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-          </div>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+          </button>
 
           {/* Preset Dropdown Menu */}
-          <div className="absolute top-full left-0 mt-1 w-72 bg-navy-900 border border-occ-border rounded-xl shadow-2xl p-2 hidden group-hover:block z-50 animate-fadeIn">
+          <div
+            role="menu"
+            aria-label="Disruption Scenarios"
+            className="absolute top-full left-0 mt-1 w-72 bg-navy-900 border border-occ-border rounded-xl shadow-2xl p-2 hidden group-hover:block z-50 animate-fadeIn"
+          >
             <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
               Select Disruption Scenario
             </div>
             {presets.map((preset) => (
               <button
                 key={preset.id}
+                type="button"
+                role="menuitem"
+                aria-current={currentPresetId === preset.id ? 'true' : undefined}
+                aria-label={`Scenario: ${preset.name}. ${preset.description}`}
                 onClick={() => applyPreset(preset.id)}
-                className={`w-full text-left px-2.5 py-2 rounded-lg text-xs transition-colors flex flex-col gap-0.5 ${
+                className={`w-full text-left px-2.5 py-2 rounded-lg text-xs transition-colors flex flex-col gap-0.5 focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none ${
                   currentPresetId === preset.id
                     ? 'bg-cyan-950/40 text-white border border-occ-cyan/30'
                     : 'text-slate-300 hover:bg-navy-800 hover:text-white'
@@ -123,8 +137,10 @@ export const TopHeader: React.FC = () => {
 
         {/* Global Search Button */}
         <button
+          type="button"
           onClick={() => setIsSearchOpen(true)}
-          className="flex items-center gap-2 bg-navy-850 hover:bg-navy-800 border border-occ-border rounded-lg px-3 py-1.5 text-xs text-slate-300 transition-colors"
+          aria-label="Open global search palette (Press Ctrl+K)"
+          className="flex items-center gap-2 bg-navy-850 hover:bg-navy-800 border border-occ-border rounded-lg px-3 py-1.5 text-xs text-slate-300 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none"
           title="Search Flights, Tails, Airports (Ctrl+K)"
         >
           <Search className="w-3.5 h-3.5 text-occ-cyan" />

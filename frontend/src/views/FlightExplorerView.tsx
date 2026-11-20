@@ -80,13 +80,14 @@ export const FlightExplorerView: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2.5 text-xs font-mono">
           {/* Search Box */}
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" aria-hidden="true" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Filter flights by flight ID, aircraft tail, or airport code"
               placeholder="Filter by flight, tail, airport..."
-              className="pl-8 pr-3 py-1.5 rounded-lg bg-navy-900 border border-occ-border text-white placeholder-slate-500 text-xs focus:outline-none focus:border-occ-cyan w-56"
+              className="pl-8 pr-3 py-1.5 rounded-lg bg-navy-900 border border-occ-border text-white placeholder-slate-500 text-xs focus:outline-none focus:border-occ-cyan focus-visible:ring-2 focus-visible:ring-cyan-400 w-56"
             />
           </div>
 
@@ -94,7 +95,8 @@ export const FlightExplorerView: React.FC = () => {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-navy-900 border border-occ-border rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none"
+            aria-label="Filter flights by operational status"
+            className="bg-navy-900 border border-occ-border rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <option value="ALL">All Statuses ({Object.keys(simState.flights).length})</option>
             <option value="ON_TIME">On Time</option>
@@ -107,7 +109,8 @@ export const FlightExplorerView: React.FC = () => {
           <select
             value={airportFilter}
             onChange={(e) => setAirportFilter(e.target.value)}
-            className="bg-navy-900 border border-occ-border rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none"
+            aria-label="Filter flights by airport"
+            className="bg-navy-900 border border-occ-border rounded-lg px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <option value="ALL">All Airports</option>
             {uniqueAirports.map((a) => (
@@ -122,18 +125,18 @@ export const FlightExplorerView: React.FC = () => {
       {/* Flight Explorer Roster Table */}
       <div className="bg-navy-900 border border-occ-border rounded-2xl overflow-hidden shadow-occ-card font-mono text-xs">
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="w-full text-left" aria-label="Flight schedule and status roster">
             <thead className="bg-navy-850 text-slate-400 text-[10px] uppercase border-b border-occ-border">
               <tr>
-                <th className="py-3 px-4">Flight & Tail</th>
-                <th className="py-3 px-4">Leg</th>
-                <th className="py-3 px-4">Route</th>
-                <th className="py-3 px-4">Scheduled</th>
-                <th className="py-3 px-4">Predicted</th>
-                <th className="py-3 px-4">Delay & Status</th>
-                <th className="py-3 px-4">Pax</th>
-                <th className="py-3 px-4">Root Cause / Trigger</th>
-                <th className="py-3 px-4 text-right">Detective</th>
+                <th scope="col" className="py-3 px-4">Flight & Tail</th>
+                <th scope="col" className="py-3 px-4">Leg</th>
+                <th scope="col" className="py-3 px-4">Route</th>
+                <th scope="col" className="py-3 px-4">Scheduled</th>
+                <th scope="col" className="py-3 px-4">Predicted</th>
+                <th scope="col" className="py-3 px-4">Delay & Status</th>
+                <th scope="col" className="py-3 px-4">Pax</th>
+                <th scope="col" className="py-3 px-4">Root Cause / Trigger</th>
+                <th scope="col" className="py-3 px-4 text-right">Detective</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-occ-border/60">

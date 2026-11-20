@@ -85,11 +85,15 @@ export const DelayDetectiveView: React.FC = () => {
 
         {/* Flight Selector */}
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-400 font-mono">Select Flight:</span>
+          <label htmlFor="flight-investigation-select" className="text-xs text-slate-400 font-mono">
+            Select Flight:
+          </label>
           <select
+            id="flight-investigation-select"
             value={currentFlight?.flight_id || ''}
             onChange={(e) => selectFlight(e.target.value)}
-            className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+            aria-label="Select flight to investigate delay root cause"
+            className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500 focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
             <optgroup label="Disrupted Flights">
               {delayedFlights.map((df) => (

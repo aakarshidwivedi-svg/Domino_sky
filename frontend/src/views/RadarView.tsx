@@ -64,23 +64,27 @@ export const RadarView: React.FC = () => {
           {sideTrayOpen ? (
             <>
               <div className="flex items-center gap-2 text-xs font-mono font-bold text-white">
-                <Radar className="w-4 h-4 text-occ-cyan" />
+                <Radar className="w-4 h-4 text-occ-cyan" aria-hidden="true" />
                 <span>RADAR OPERATIONS</span>
               </div>
               <button
+                type="button"
                 onClick={() => setSideTrayOpen(false)}
-                className="p-1 rounded text-slate-400 hover:text-white"
+                aria-label="Collapse Radar Operations Tray"
+                className="p-1 rounded text-slate-400 hover:text-white focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden="true" />
               </button>
             </>
           ) : (
             <button
+              type="button"
               onClick={() => setSideTrayOpen(true)}
-              className="w-full flex items-center justify-center p-1 text-slate-400 hover:text-occ-cyan"
+              aria-label="Expand Radar Operations Tray"
+              className="w-full flex items-center justify-center p-1 text-slate-400 hover:text-occ-cyan focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none"
               title="Expand Radar Operations Tray"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-4 h-4" aria-hidden="true" />
             </button>
           )}
         </div>
@@ -90,16 +94,18 @@ export const RadarView: React.FC = () => {
             {/* 1. Quick Disruption Injector */}
             <div className="p-3.5 rounded-xl bg-navy-950 border border-occ-border space-y-3">
               <div className="flex items-center gap-1.5 font-bold text-white text-[11px] uppercase tracking-wider">
-                <AlertTriangle className="w-3.5 h-3.5 text-occ-amber" />
+                <AlertTriangle className="w-3.5 h-3.5 text-occ-amber" aria-hidden="true" />
                 <span>Simulate Airport Disruption</span>
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] text-slate-400">CHOOSE AIRPORT:</label>
+                <label htmlFor="quick-airport-select" className="text-[10px] text-slate-400 block">CHOOSE AIRPORT:</label>
                 <select
+                  id="quick-airport-select"
                   value={selectedQuickAirport}
                   onChange={(e) => setSelectedQuickAirport(e.target.value)}
-                  className="w-full bg-navy-850 border border-occ-border rounded-lg p-2 text-white font-mono text-xs focus:outline-none"
+                  aria-label="Choose airport for disruption simulation"
+                  className="w-full bg-navy-850 border border-occ-border rounded-lg p-2 text-white font-mono text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                 >
                   {Object.values(airports).map((apt) => (
                     <option key={apt.id} value={apt.id}>
@@ -111,17 +117,19 @@ export const RadarView: React.FC = () => {
 
               <div className="space-y-1">
                 <div className="flex justify-between text-[10px] text-slate-400">
-                  <span>CLOSURE DURATION:</span>
+                  <label htmlFor="closure-duration-range">CLOSURE DURATION:</label>
                   <span className="text-white font-bold">{closureDurationMins}m</span>
                 </div>
                 <input
+                  id="closure-duration-range"
                   type="range"
                   min="30"
                   max="180"
                   step="15"
                   value={closureDurationMins}
+                  aria-label="Airport closure duration in minutes"
                   onChange={(e) => setClosureDurationMins(Number(e.target.value))}
-                  className="w-full accent-occ-cyan cursor-pointer"
+                  className="w-full accent-occ-cyan cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none"
                 />
               </div>
 
