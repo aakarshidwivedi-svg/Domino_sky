@@ -86,23 +86,29 @@ export const KpiStrip: React.FC = () => {
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 p-3 bg-navy-950 border-b border-occ-border select-none">
+    <nav
+      role="region"
+      aria-label="Operational Key Performance Indicators"
+      className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 p-3 bg-navy-950 border-b border-occ-border select-none"
+    >
       {cards.map((c) => {
         const Icon = c.icon;
         return (
-          <div
+          <button
+            type="button"
             key={c.id}
             onClick={c.onClick}
-            className={`p-3 rounded-xl border ${c.borderColor} ${c.bgColor} hover:bg-navy-800/80 transition-all cursor-pointer flex flex-col justify-between shadow-occ-card group`}
+            aria-label={`${c.label}: ${c.value}. ${c.subtext}. Click to open workspace.`}
+            className={`p-3 rounded-xl border text-left ${c.borderColor} ${c.bgColor} hover:bg-navy-800/80 transition-all cursor-pointer flex flex-col justify-between shadow-occ-card group focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none`}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between w-full">
               <span className="text-[10px] font-bold text-slate-400 tracking-wider truncate">
                 {c.label}
               </span>
-              <Icon className={`w-3.5 h-3.5 ${c.color} opacity-80 group-hover:opacity-100 transition-opacity`} />
+              <Icon className={`w-3.5 h-3.5 ${c.color} opacity-80 group-hover:opacity-100 transition-opacity`} aria-hidden="true" />
             </div>
 
-            <div className="mt-1 flex items-baseline gap-2">
+            <div className="mt-1 flex items-baseline gap-2" aria-live="polite">
               <span className={`text-xl font-extrabold font-mono ${c.color}`}>
                 {c.value}
               </span>
@@ -111,9 +117,9 @@ export const KpiStrip: React.FC = () => {
             <div className="mt-1 text-[10px] text-slate-400 font-mono truncate">
               {c.subtext}
             </div>
-          </div>
+          </button>
         );
       })}
-    </div>
+    </nav>
   );
 };

@@ -43,24 +43,29 @@ export const SimulationTimeline: React.FC = () => {
       {/* Play/Pause & Speed Controls */}
       <div className="flex items-center gap-2">
         <button
+          type="button"
           onClick={togglePlay}
-          className={`p-2 rounded-lg font-mono text-xs font-bold flex items-center gap-1.5 transition-all ${
+          aria-label={isPlaying ? 'Pause simulation clock' : 'Run simulation clock'}
+          className={`p-2 rounded-lg font-mono text-xs font-bold flex items-center gap-1.5 transition-all focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none ${
             isPlaying
               ? 'bg-cyan-500/20 text-occ-cyan border border-occ-cyan/40 hover:bg-cyan-500/30 shadow-cyan-sm'
               : 'bg-amber-500/20 text-occ-amber border border-occ-amber/40 hover:bg-amber-500/30'
           }`}
           title={isPlaying ? 'Pause Simulation' : 'Run Simulation'}
         >
-          {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+          {isPlaying ? <Pause className="w-3.5 h-3.5" aria-hidden="true" /> : <Play className="w-3.5 h-3.5" aria-hidden="true" />}
           <span className="hidden sm:inline">{isPlaying ? 'PAUSE' : 'RESUME'}</span>
         </button>
 
-        <div className="flex items-center gap-1 bg-navy-800 p-0.5 rounded-lg border border-occ-border text-xs font-mono">
+        <div role="group" aria-label="Simulation speed multiplier" className="flex items-center gap-1 bg-navy-800 p-0.5 rounded-lg border border-occ-border text-xs font-mono">
           {[1, 2, 5, 10].map((s) => (
             <button
+              type="button"
               key={s}
               onClick={() => setSpeed(s)}
-              className={`px-2 py-1 rounded transition-colors ${
+              aria-pressed={speedMultiplier === s}
+              aria-label={`Set simulation speed to ${s}x`}
+              className={`px-2 py-1 rounded transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none ${
                 speedMultiplier === s
                   ? 'bg-occ-cyan text-navy-950 font-extrabold'
                   : 'text-slate-400 hover:text-white'
@@ -72,11 +77,13 @@ export const SimulationTimeline: React.FC = () => {
         </div>
 
         <button
+          type="button"
           onClick={restart}
-          className="p-2 text-slate-400 hover:text-white bg-navy-800 border border-occ-border rounded-lg transition-colors"
+          aria-label="Restart simulation from 06:00 IST"
+          className="p-2 text-slate-400 hover:text-white bg-navy-800 border border-occ-border rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none"
           title="Restart from 06:00 IST"
         >
-          <RotateCcw className="w-3.5 h-3.5" />
+          <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       </div>
 
@@ -84,7 +91,7 @@ export const SimulationTimeline: React.FC = () => {
       <div className="flex-1 max-w-4xl mx-2 flex flex-col justify-center">
         <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
           <div className="flex items-center gap-2">
-            <span className="text-white font-bold">{simTimeStr} IST</span>
+            <span className="text-white font-bold" aria-live="polite">{simTimeStr} IST</span>
             <span className="text-slate-400 hidden md:inline">
               &bull; Active Flights:{' '}
               {
@@ -101,7 +108,7 @@ export const SimulationTimeline: React.FC = () => {
                 key={c.airport_id}
                 className="flex items-center gap-1 text-occ-red font-semibold bg-red-950/40 px-1.5 py-0.2 rounded border border-occ-red/30"
               >
-                <AlertTriangle className="w-2.5 h-2.5" />
+                <AlertTriangle className="w-2.5 h-2.5" aria-hidden="true" />
                 {c.airport_id} [{minutesToTime(c.start_minute)}-{minutesToTime(c.end_minute)}]
               </span>
             ))}
@@ -111,8 +118,24 @@ export const SimulationTimeline: React.FC = () => {
         {/* The interactive bar */}
         <div
           ref={barRef}
+          role="slider"
+          tabIndex={0}
+          aria-valuemin={DAY_START}
+          aria-valuemax={DAY_END}
+          aria-valuenow={simMinute}
+          aria-valuetext={`${simTimeStr} IST`}
+          aria-label="Simulation Time Scrubber (Use Left and Right arrow keys to scrub time)"
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') {
+              e.preventDefault();
+              scrubTime(Math.max(DAY_START, simMinute - 15));
+            } else if (e.key === 'ArrowRight') {
+              e.preventDefault();
+              scrubTime(Math.min(DAY_END, simMinute + 15));
+            }
+          }}
           onClick={handleBarClick}
-          className="relative h-2.5 bg-navy-800 hover:bg-navy-750 rounded-full cursor-pointer overflow-visible group"
+          className="relative h-2.5 bg-navy-800 hover:bg-navy-750 rounded-full cursor-pointer overflow-visible group focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none"
         >
           {/* Progress fill */}
           <div
