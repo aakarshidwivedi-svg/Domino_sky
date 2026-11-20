@@ -585,8 +585,15 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
         </div>
       </div>
 
+      {/* Screen-reader descriptive summary */}
+      <div className="sr-only" role="status" aria-live="polite">
+        Interactive India Airspace Radar Map displaying {Object.keys(simState.flights).length} flights across 16 airports.
+        Current active airborne: {Object.values(simState.flights).filter((f) => f.current_phase === 'AIRBORNE' || f.current_phase === 'HOLDING').length} flights.
+        Active airport closures: {closures.length > 0 ? closures.map((c) => c.airport_id).join(', ') : 'None'}.
+      </div>
+
       {/* The Leaflet Container */}
-      <div ref={mapContainerRef} className="w-full h-full flex-1 z-0" />
+      <div ref={mapContainerRef} className="w-full h-full flex-1 z-0" aria-label="Interactive airspace map of India" />
     </div>
   );
 };
