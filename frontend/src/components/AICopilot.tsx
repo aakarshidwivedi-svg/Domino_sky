@@ -56,7 +56,11 @@ export const AICopilot: React.FC<{ isEmbedded?: boolean }> = ({ isEmbedded = fal
   };
 
   return (
-    <div className={`flex flex-col h-full bg-slate-950/80 rounded-xl border border-cyan-900/40 backdrop-blur-md overflow-hidden ${isEmbedded ? 'p-3' : 'p-6'}`}>
+    <section
+      role="region"
+      aria-label="Interactive AI Operations Copilot"
+      className={`flex flex-col h-full bg-slate-950/80 rounded-xl border border-cyan-900/40 backdrop-blur-md overflow-hidden ${isEmbedded ? 'p-3' : 'p-6'}`}
+    >
       {/* Header bar */}
       <div className="flex items-center justify-between pb-4 border-b border-slate-800">
         <div className="flex items-center gap-3">
@@ -104,7 +108,12 @@ export const AICopilot: React.FC<{ isEmbedded?: boolean }> = ({ isEmbedded = fal
       </div>
 
       {/* Chat Messages Log */}
-      <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
+      <div
+        role="log"
+        aria-live="polite"
+        aria-label="AI Copilot message log"
+        className="flex-1 overflow-y-auto py-4 space-y-4 pr-1"
+      >
         {copilotMessages.map((msg) => (
           <div
             key={msg.id}
@@ -184,6 +193,6 @@ export const AICopilot: React.FC<{ isEmbedded?: boolean }> = ({ isEmbedded = fal
           <Send className="w-4 h-4" />
         </button>
       </form>
-    </div>
+    </section>
   );
 };

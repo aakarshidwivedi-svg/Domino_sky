@@ -37,18 +37,23 @@ export const FlightDetailDrawer: React.FC = () => {
   const crewInfo = simState.crews.find((cr) => cr.flight_ids.includes(f.flight_id));
 
   return (
-    <div className="fixed inset-y-0 right-0 z-50 w-full max-w-xl bg-navy-900 border-l border-occ-border shadow-2xl flex flex-col overflow-hidden animate-slideLeft">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="flight-drawer-title"
+      className="fixed inset-y-0 right-0 z-50 w-full max-w-xl bg-navy-900 border-l border-occ-border shadow-2xl flex flex-col overflow-hidden animate-slideLeft"
+    >
       {/* Drawer Top Header */}
       <div className="h-14 px-4 bg-navy-850 border-b border-occ-border flex items-center justify-between select-none">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 rounded-lg bg-cyan-500/10 border border-occ-cyan/40">
-            <Plane className="w-4 h-4 text-occ-cyan" />
+            <Plane className="w-4 h-4 text-occ-cyan" aria-hidden="true" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-mono font-extrabold text-base text-white">
+              <h2 id="flight-drawer-title" className="font-mono font-extrabold text-base text-white">
                 {f.flight_id}
-              </span>
+              </h2>
               <span className="text-xs font-mono px-2 py-0.5 rounded bg-navy-750 text-slate-300 border border-slate-700">
                 {f.tail_id}
               </span>
@@ -73,10 +78,12 @@ export const FlightDetailDrawer: React.FC = () => {
         </div>
 
         <button
+          type="button"
           onClick={() => setInvestigatorOpen(false)}
-          className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-navy-750 transition-colors"
+          aria-label={`Close details drawer for flight ${f.flight_id}`}
+          className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-navy-750 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none"
         >
-          <X className="w-5 h-5" />
+          <X className="w-5 h-5" aria-hidden="true" />
         </button>
       </div>
 

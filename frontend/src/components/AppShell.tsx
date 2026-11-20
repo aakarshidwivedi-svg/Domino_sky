@@ -45,16 +45,22 @@ export const AppShell: React.FC = () => {
 
         {/* Global Action Feedback Toast */}
         {lastActionMessage && (
-          <div className="fixed bottom-16 right-6 z-50 bg-navy-850 border border-occ-cyan/40 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-3 font-mono text-xs animate-bounce">
-            <CheckCircle2 className="w-4 h-4 text-occ-cyan flex-shrink-0" />
+          <aside
+            role="status"
+            aria-live="polite"
+            className="fixed bottom-16 right-6 z-50 bg-navy-850 border border-occ-cyan/40 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-3 font-mono text-xs"
+          >
+            <CheckCircle2 className="w-4 h-4 text-occ-cyan flex-shrink-0" aria-hidden="true" />
             <span>{lastActionMessage}</span>
             <button
+              type="button"
               onClick={dismissActionMessage}
-              className="text-slate-400 hover:text-white p-0.5"
+              aria-label="Dismiss notification message"
+              className="text-slate-400 hover:text-white p-0.5 rounded focus-visible:ring-2 focus-visible:ring-cyan-400 focus:outline-none"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
-          </div>
+          </aside>
         )}
       </div>
 
