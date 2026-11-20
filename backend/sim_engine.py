@@ -85,16 +85,19 @@ class SimulationFact:
     verified: bool = True
 
 class DominoSkyEngine:
-    def __init__(self, dataset_path: str = "dataset.json"):
-        with open(dataset_path, "r", encoding="utf-8") as f:
-            self.raw_data = json.load(f)
+    def __init__(self, dataset_path: str = "dataset.json", dataset_dict: Optional[Dict] = None):
+        if dataset_dict is not None:
+            self.raw_data = dataset_dict
+        else:
+            with open(dataset_path, "r", encoding="utf-8") as f:
+                self.raw_data = json.load(f)
             
         self.meta = self.raw_data.get("meta", {})
         self.min_turnaround_standard = self.meta.get("min_turnaround_minutes", 30)
         self.seats_per_aircraft = self.meta.get("seats_per_aircraft", 180)
         
-        self.airports = {a["id"]: dict(a) for a in self.raw_data["airports"]}
-        self.base_flights = {f["flight_id"]: dict(f) for f in self.raw_data["flights"]}
+        self.airports = {a["id"]: dict(a) for a in self.raw_data.get("airports", [])}
+        self.base_flights = {f["flight_id"]: dict(f) for f in self.raw_data.get("flights", [])}
         self.connections = [dict(c) for c in self.raw_data.get("connections", [])]
         self.crews = [dict(cr) for cr in self.raw_data.get("crews", [])]
         self.spare_aircraft = {s["tail_id"]: dict(s) for s in self.raw_data.get("spare_aircraft", [])}
@@ -170,10 +173,11 @@ class DominoSkyEngine:
             eff_tail = f_copy["tail_id"]
             flights_by_tail.setdefault(eff_tail, []).append(f_copy)
 
-        # 3. Build multi-airport closure lookup
+        # 3. Build multi-airport closure lookup (filter zero or inverted intervals)
         closure_dict: Dict[str, List[AirportClosure]] = {}
         for cl in closures:
-            closure_dict.setdefault(cl.airport_id, []).append(cl)
+            if cl.end_minute > cl.start_minute:
+                closure_dict.setdefault(cl.airport_id, []).append(cl)
 
         airport_holding_queues: Dict[str, List[str]] = {}
         airport_runway_slots: Dict[str, List[int]] = {} # Tracks allocated runway movements

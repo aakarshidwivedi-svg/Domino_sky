@@ -166,3 +166,60 @@ test('Frontend Simulation Engine - Multi-Objective Recovery Optimizer', () => {
     assert.ok(p.tradeoffs.pros.length > 0);
   });
 });
+
+test('Frontend Simulation Engine - Detrimental/Suboptimal Recovery Evaluation', () => {
+  // Baseline schedule: cancelling an on-time flight (DS0101) with zero downstream delay
+  const comparison = localSimulator.compareScenarios([], {}, [], ['DS0101']);
+  assert.equal(comparison.delta.delay_minutes_saved, 0, 'No delay saved by cancelling on-time flight');
+  assert.equal(comparison.delta.is_effective, false, 'Suboptimal action must be marked ineffective');
+});
+
+test('Frontend Simulation Engine - Zero-Duration and Inverted Closure Handling', () => {
+  // Closures where end <= start must be filtered out gracefully
+  const zeroClosure = [{ airport_id: 'BOM', start_minute: 500, end_minute: 500, reason: 'Zero Test' }];
+  const invertedClosure = [{ airport_id: 'DEL', start_minute: 600, end_minute: 550, reason: 'Inverted Test' }];
+
+  const stateZero = localSimulator.simulate(zeroClosure, {}, [], []);
+  assert.equal(stateZero.kpis.delayed_flights, 0, 'Zero-duration closure should not disrupt flights');
+  assert.equal(stateZero.kpis.total_delay_minutes, 0);
+
+  const stateInverted = localSimulator.simulate(invertedClosure, {}, [], []);
+  assert.equal(stateInverted.kpis.delayed_flights, 0, 'Inverted closure should not disrupt flights');
+  assert.equal(stateInverted.kpis.total_delay_minutes, 0);
+});
+
+test('Frontend Simulation Engine - Scenario Switching and Deterministic Parity', () => {
+  const initial = localSimulator.simulate([], {}, [], []);
+  // Run a heavy disruption
+  const disrupted = localSimulator.simulate(
+    [{ airport_id: 'BOM', start_minute: 510, end_minute: 600, reason: 'Storm' }],
+    {},
+    [],
+    []
+  );
+  assert.ok(disrupted.kpis.delayed_flights > 0);
+
+  // Reset back to baseline
+  const reset = localSimulator.simulate([], {}, [], []);
+  assert.equal(reset.kpis.delayed_flights, initial.kpis.delayed_flights);
+  assert.equal(reset.kpis.total_delay_minutes, initial.kpis.total_delay_minutes);
+  assert.equal(reset.kpis.broken_connections, initial.kpis.broken_connections);
+  assert.equal(reset.kpis.passengers_at_risk, initial.kpis.passengers_at_risk);
+});
+
+test('Frontend Simulation Engine - Turnaround Constraint Enforcement', () => {
+  // Delay VT-DS01 first leg DS0101 by 45 minutes
+  const manualDelays = { DS0101: 45 };
+  const state = localSimulator.simulate([], manualDelays, [], []);
+
+  const f1 = state.flights['DS0101'];
+  const f2 = state.flights['DS0102'];
+
+  assert.ok(f1 && f2, 'Both legs on VT-DS01 must exist');
+  // f2 pred_dep_min must be >= f1 pred_arr_min + turnaround
+  assert.ok(
+    f2.pred_dep_min >= f1.pred_arr_min + f2.effective_turnaround_required,
+    `Downline departure ${f2.pred_dep_min} must respect turnaround (${f1.pred_arr_min} + ${f2.effective_turnaround_required})`
+  );
+});
+

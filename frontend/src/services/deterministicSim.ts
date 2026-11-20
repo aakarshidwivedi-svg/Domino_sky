@@ -225,6 +225,8 @@ export class ClientSimulationEngine {
       if (!apt) return;
       const start = c.start_minute;
       const end = c.end_minute;
+      // Filter out zero-duration or inverted closure intervals
+      if (end <= start) return;
       const reason = c.reason || 'Weather / Operational closure';
       const normalized: AirportClosure = {
         airport_id: apt,

@@ -392,5 +392,143 @@ class TestDominoSkyEngine(unittest.TestCase):
             self.assertTrue(fact["verified"])
         print(f"[PASS] Test 24: Structured simulation facts verified ({len(facts)} facts with strict provenance).")
 
+    def test_25_recovery_actions_that_worsen_outcome(self):
+        """Test 25: Verifies that detrimental/suboptimal recovery actions are identified and penalized."""
+        # Baseline: 0 delay. Arbitrarily cancel on-time high-load flight DS0101
+        res_baseline = self.engine.simulate()
+        res_worsened = self.engine.simulate(cancelled_flight_ids=["DS0101"])
+        
+        # Flight is cancelled, 118 passengers stranded, 0 delay saved
+        f = res_worsened["flights"]["DS0101"]
+        self.assertTrue(f["is_cancelled"])
+        self.assertGreater(f["pax"], 50)
+        
+        # Check scenario comparison delta
+        cmp_res = self.engine.compare_scenarios(
+            closures=[],
+            manual_delays={},
+            deployments=[],
+            cancelled_flight_ids=["DS0101"]
+        )
+        # Cancelling an on-time flight saves 0 delay and is marked not effective
+        self.assertEqual(cmp_res["delta"]["delay_minutes_saved"], 0)
+        self.assertEqual(cmp_res["delta"]["flights_recovered"], 0)
+        self.assertFalse(cmp_res["delta"]["is_effective"])
+        print(f"[PASS] Test 25: Detrimental cancellation identified: 0m saved, {f['pax']} pax disrupted, is_effective=False.")
+
+    def test_26_empty_dataset_and_missing_attributes_resilience(self):
+        """Test 26: Verifies simulation engine resilience against empty or sparse datasets."""
+        empty_data = {
+            "airports": [],
+            "flights": [],
+            "connections": [],
+            "crews": [],
+            "spare_aircraft": []
+        }
+        empty_engine = DominoSkyEngine(dataset_dict=empty_data)
+        res = empty_engine.simulate()
+        self.assertEqual(res["kpis"]["total_flights"], 0)
+        self.assertEqual(res["kpis"]["delayed_flights"], 0)
+        self.assertEqual(res["kpis"]["on_time_pct"], 0.0)
+        self.assertEqual(len(res["flights"]), 0)
+        print("[PASS] Test 26: Empty dataset handled gracefully with 0 exceptions and valid KPIs.")
+
+    def test_27_reset_replay_and_scenario_switching_determinism(self):
+        """Test 27: Verifies exact state restoration across repeated scenario switching and baseline resets."""
+        initial_baseline = self.engine.simulate()
+        
+        # Switch to BOM closure
+        bom_res = self.engine.simulate(closures=[AirportClosure(airport_id="BOM", start_minute=510, end_minute=600)])
+        self.assertGreater(bom_res["kpis"]["delayed_flights"], 0)
+        
+        # Switch to DEL closure
+        del_res = self.engine.simulate(closures=[AirportClosure(airport_id="DEL", start_minute=540, end_minute=660)])
+        self.assertGreater(del_res["kpis"]["delayed_flights"], 0)
+        
+        # Reset back to baseline
+        reset_baseline = self.engine.simulate(closures=[], manual_delays={}, deployments=[], cancelled_flight_ids=[])
+        
+        # Assert complete parity between initial baseline and reset state
+        self.assertEqual(initial_baseline["kpis"], reset_baseline["kpis"])
+        for fid, f in initial_baseline["flights"].items():
+            rf = reset_baseline["flights"][fid]
+            self.assertEqual(f["pred_dep"], rf["pred_dep"])
+            self.assertEqual(f["pred_arr"], rf["pred_arr"])
+            self.assertEqual(f["delay_minutes"], rf["delay_minutes"])
+            self.assertEqual(f["status"], rf["status"])
+        print("[PASS] Test 27: Scenario switching and reset determinism verified with 100% bitwise parity.")
+
+    def test_28_insufficient_turnaround_time_enforcement(self):
+        """Test 28: Verifies statutory 30m minimum turnaround time is strictly enforced when incoming leg is delayed."""
+        # Inject +40m manual delay on DS0101 (VT-DS01 Leg 1, sched 06:00->08:15)
+        # Sched arr becomes 08:55. Next leg DS0102 scheduled departure is 09:00 (only 5m gap).
+        # Statutory 30m turnaround minimum requires departure at 08:55 + 30m = 09:25 (+25m delay on DS0102).
+        res = self.engine.simulate(manual_delays={"DS0101": 40})
+        f1 = res["flights"]["DS0101"]
+        f2 = res["flights"]["DS0102"]
+        
+        self.assertEqual(f1["delay_minutes"], 40)
+        self.assertGreaterEqual(f2["pred_dep_min"], f1["pred_arr_min"] + 30)
+        self.assertGreaterEqual(f2["delay_minutes"], 20)
+        print(f"[PASS] Test 28: Statutory turnaround enforced: arr={f1['pred_arr']}, min 30m gap, dep={f2['pred_dep']} (+{f2['delay_minutes']}m delay).")
+
+    def test_29_zero_and_inverted_closure_boundary_conditions(self):
+        """Test 29: Verifies zero-duration and inverted closure intervals do not produce erroneous delays."""
+        # 0-minute duration closure
+        res_zero = self.engine.simulate(closures=[AirportClosure(airport_id="BOM", start_minute=510, end_minute=510)])
+        self.assertEqual(res_zero["kpis"]["delayed_flights"], 0)
+        self.assertEqual(res_zero["kpis"]["total_delay_minutes"], 0)
+        
+        # Inverted interval (start > end)
+        res_inverted = self.engine.simulate(closures=[AirportClosure(airport_id="BOM", start_minute=600, end_minute=510)])
+        self.assertEqual(res_inverted["kpis"]["delayed_flights"], 0)
+        self.assertEqual(res_inverted["kpis"]["total_delay_minutes"], 0)
+        print("[PASS] Test 29: Zero-duration and inverted closure boundary conditions handled safely (0m delay).")
+
+    def test_30_api_http_endpoints_and_error_handling(self):
+        """Test 30: Verifies FastAPI REST endpoints, status codes, and error responses via TestClient."""
+        from fastapi.testclient import TestClient
+        from main import app
+        
+        client = TestClient(app)
+        
+        # 1. Health endpoint
+        r_health = client.get("/api/health")
+        self.assertEqual(r_health.status_code, 200)
+        self.assertEqual(r_health.json()["status"], "ONLINE")
+        
+        # 2. Airports endpoint
+        r_airports = client.get("/api/airports")
+        self.assertEqual(r_airports.status_code, 200)
+        self.assertEqual(len(r_airports.json()), 16)
+        
+        # 3. Valid flight detective
+        r_det = client.get("/api/flights/DS0201/detective")
+        self.assertEqual(r_det.status_code, 200)
+        self.assertEqual(r_det.json()["flight_id"], "DS0201")
+        
+        # 4. Unknown flight detective error handling (404)
+        r_404 = client.get("/api/flights/INVALID_FLT_999/detective")
+        self.assertEqual(r_404.status_code, 404)
+        self.assertIn("not found", r_404.json()["detail"].lower())
+        
+        # 5. Recovery conflicts detection endpoint
+        r_conf = client.post("/api/recovery/conflicts", json={
+            "deployments": [{
+                "spare_tail": "VT-DS18",
+                "target_flight_id": "DS1502",
+                "replace_remaining_rotation": True,
+                "assumed_reposition_minutes": 0,
+                "notes": "test"
+            }],
+            "cancelled_flights": ["DS1502"],
+            "closures": []
+        })
+        self.assertEqual(r_conf.status_code, 200)
+        self.assertTrue(r_conf.json()["has_conflicts"])
+        self.assertGreater(len(r_conf.json()["conflicts"]), 0)
+        
+        print("[PASS] Test 30: FastAPI HTTP endpoints and error handling verified (200, 404, conflicts checked).")
+
 if __name__ == "__main__":
     unittest.main()
