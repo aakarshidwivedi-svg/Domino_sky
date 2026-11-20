@@ -61,20 +61,64 @@ export const AIRPORT_ALTERNATES: Record<string, string[]> = {
 
 export const CREW_BASES = new Set(['DEL', 'BOM', 'BLR', 'HYD', 'CCU', 'MAA', 'AMD', 'COK', 'PNQ', 'GOI', 'TRV']);
 
+interface RawFlight {
+  flight_id: string;
+  tail_id: string;
+  origin: string;
+  destination: string;
+  dep: string;
+  arr: string;
+  block_minutes?: number;
+  turnaround_before_min: number | null;
+  leg_order: number;
+  pax: number;
+  aircraft_type?: string;
+}
+
+interface RawConnection {
+  connection_id: string;
+  airport: string;
+  from_flight: string;
+  to_flight: string;
+  min_connect_minutes: number;
+  passengers: number;
+}
+
+interface RawCrew {
+  crew_id: string;
+  tail_id: string;
+  flight_ids: string[];
+  base: string;
+  duty_start: string;
+  max_duty_mins?: number;
+  max_duty_hours?: number;
+}
+
+interface RawSpareAircraft {
+  tail_id: string;
+  base: string;
+  available_from: string;
+  seats: number;
+}
+
 export class ClientSimulationEngine {
   private airports: Record<string, Airport> = {};
-  private baseFlights: Record<string, any> = {};
-  private connections: any[] = [];
-  private crews: any[] = [];
-  private spareAircraft: Record<string, any> = {};
+  private baseFlights: Record<string, Flight> = {};
+  private connections: RawConnection[] = [];
+  private crews: RawCrew[] = [];
+  private spareAircraft: Record<string, SpareAircraft> = {};
   private minTurnaround = 30;
 
   constructor() {
-    (rawDataset.airports || []).forEach((a: any) => {
-      this.airports[a.id] = a;
+    (rawDataset.airports || []).forEach((airport) => {
+      this.airports[airport.id] = {
+        ...airport,
+        tier: airport.tier as Airport['tier'],
+      };
     });
 
-    (rawDataset.flights || []).forEach((f: any) => {
+    (rawDataset.flights || []).forEach((flight) => {
+      const f: RawFlight = flight;
       const depMin = timeToMinutes(f.dep);
       let arrMin = timeToMinutes(f.arr);
       if (arrMin < depMin) arrMin += 1440;
@@ -83,13 +127,37 @@ export class ClientSimulationEngine {
         sched_dep_min: depMin,
         sched_arr_min: arrMin,
         block_minutes: f.block_minutes || arrMin - depMin,
+        pred_dep: f.dep,
+        pred_arr: f.arr,
+        pred_dep_min: depMin,
+        pred_arr_min: arrMin,
+        dep_delay: 0,
+        arr_delay: 0,
+        delay_minutes: 0,
+        status: 'ON_TIME',
+        current_phase: 'SCHEDULED',
+        progress: 0,
+        is_holding: false,
+        holding_minutes: 0,
+        root_cause: '',
+        delay_reasons: [],
+        prev_flight_id: null,
+        next_flight_id: null,
+        is_spare_recovered: false,
+        assigned_spare_tail: null,
+        reposition_mins: 0,
       };
     });
 
     this.connections = rawDataset.connections || [];
     this.crews = rawDataset.crews || [];
-    (rawDataset.spare_aircraft || []).forEach((s: any) => {
-      this.spareAircraft[s.tail_id] = s;
+    (rawDataset.spare_aircraft || []).forEach((spare) => {
+      const s: RawSpareAircraft = spare;
+      this.spareAircraft[s.tail_id] = {
+        ...s,
+        is_deployed: false,
+        assigned_to: [],
+      };
     });
   }
 
@@ -115,7 +183,7 @@ export class ClientSimulationEngine {
       if (targetFlight) {
         const origTail = targetFlight.tail_id;
         const targetLeg = targetFlight.leg_order;
-        Object.values(this.baseFlights).forEach((f: any) => {
+        Object.values(this.baseFlights).forEach((f: Flight) => {
           if (f.tail_id === origTail && f.leg_order >= targetLeg) {
             activeSubstitutions[f.flight_id] = {
               spareTail: dep.spare_tail,
@@ -127,11 +195,11 @@ export class ClientSimulationEngine {
     });
 
     // 2. Group flights by aircraft rotation
-    const flightsByTail: Record<string, any[]> = {};
+    const flightsByTail: Record<string, Flight[]> = {};
     Object.values(this.baseFlights)
-      .sort((a: any, b: any) => a.tail_id.localeCompare(b.tail_id) || a.leg_order - b.leg_order)
-      .forEach((f: any) => {
-        const fCopy = { ...f };
+      .sort((a: Flight, b: Flight) => a.tail_id.localeCompare(b.tail_id) || a.leg_order - b.leg_order)
+      .forEach((f: Flight) => {
+        const fCopy: Flight = { ...f };
         fCopy.original_tail_id = f.tail_id;
         if (activeSubstitutions[f.flight_id]) {
           const sub = activeSubstitutions[f.flight_id];
@@ -152,11 +220,11 @@ export class ClientSimulationEngine {
 
     // 3. Normalize closures into lookup dictionary
     const closureMap: Record<string, AirportClosure[]> = {};
-    closures.forEach((c: any) => {
-      const apt = c.airport_id || c.airport;
+    closures.forEach((c: AirportClosure) => {
+      const apt = c.airport_id;
       if (!apt) return;
-      const start = c.start_minute !== undefined ? c.start_minute : (c.closed_from ? timeToMinutes(c.closed_from) : 0);
-      const end = c.end_minute !== undefined ? c.end_minute : (c.closed_to ? timeToMinutes(c.closed_to) : start + (c.duration_min || 0));
+      const start = c.start_minute;
+      const end = c.end_minute;
       const reason = c.reason || 'Weather / Operational closure';
       const normalized: AirportClosure = {
         airport_id: apt,
@@ -257,7 +325,7 @@ export class ClientSimulationEngine {
         let slotDelay = 0;
 
         if (prevSimArrMin === null) {
-          if (f.is_spare_recovered) {
+          if (f.is_spare_recovered && f.assigned_spare_tail) {
             const spareData = this.spareAircraft[f.assigned_spare_tail] || {};
             const spareAvailMin = timeToMinutes(spareData.available_from || '05:00');
             const spareReadyMin = spareAvailMin + f.reposition_mins;
@@ -476,7 +544,7 @@ export class ClientSimulationEngine {
     let protectedConns = 0;
     let rebookedPax = 0;
 
-    const connectionResults: Connection[] = this.connections.map((c: any) => {
+    const connectionResults: Connection[] = this.connections.map((c: RawConnection) => {
       const fromF = simulatedFlights[c.from_flight];
       const toF = simulatedFlights[c.to_flight];
       const minConn = c.min_connect_minutes;
@@ -594,11 +662,11 @@ export class ClientSimulationEngine {
     let crewWarnings = 0;
     let crewSwaps = 0;
 
-    const crewResults: CrewAssignment[] = this.crews.map((cr: any) => {
+    const crewResults: CrewAssignment[] = this.crews.map((cr: RawCrew) => {
       const startMin = timeToMinutes(cr.duty_start);
       const assignedSimFlights = cr.flight_ids
         .map((id: string) => simulatedFlights[id])
-        .filter((f: Flight | undefined) => f && !f.is_cancelled);
+        .filter((f: Flight | undefined): f is Flight => Boolean(f && !f.is_cancelled));
 
       let dutyElapsed = 0;
       let lastFlight: Flight | undefined;
@@ -610,8 +678,9 @@ export class ClientSimulationEngine {
         }
       }
 
-      const isExceeded = dutyElapsed > cr.max_duty_mins;
-      const isWarning = !isExceeded && dutyElapsed >= cr.max_duty_mins - 45;
+      const maxAllowedMins = cr.max_duty_mins || (cr.max_duty_hours ? cr.max_duty_hours * 60 : 600);
+      const isExceeded = dutyElapsed > maxAllowedMins;
+      const isWarning = !isExceeded && dutyElapsed >= maxAllowedMins - 45;
 
       let status: CrewAssignment['status'] = 'LEGAL';
       let crewSwapped = false;
@@ -643,11 +712,11 @@ export class ClientSimulationEngine {
         tail_id: cr.tail_id,
         duty_start: cr.duty_start,
         duty_start_min: startMin,
-        max_duty_mins: cr.max_duty_mins,
+        max_duty_mins: maxAllowedMins,
         last_flight_id: lastFlight ? lastFlight.flight_id : 'NONE',
         last_flight_arr: lastFlight ? lastFlight.pred_arr : cr.duty_start,
         simulated_duty_minutes: dutyElapsed,
-        margin_remaining: cr.max_duty_mins - dutyElapsed,
+        margin_remaining: maxAllowedMins - dutyElapsed,
         status,
         is_exceeded: isExceeded,
         is_warning: isWarning,
@@ -751,7 +820,7 @@ export class ClientSimulationEngine {
 
     // 9. Spares
     const assignedSpares = new Set(deployments.map((d) => d.spare_tail));
-    const spareStatuses: SpareAircraft[] = Object.values(this.spareAircraft).map((s: any) => ({
+    const spareStatuses: SpareAircraft[] = Object.values(this.spareAircraft).map((s: SpareAircraft) => ({
       tail_id: s.tail_id,
       base: s.base,
       available_from: s.available_from,
