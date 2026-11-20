@@ -175,6 +175,7 @@ export const AICopilot: React.FC<{ isEmbedded?: boolean }> = ({ isEmbedded = fal
       {/* Input query form */}
       <form onSubmit={handleSubmit} className="mt-2 pt-3 border-t border-slate-800 flex items-center gap-2">
         <input
+          id="copilot-query-input"
           type="text"
           value={inputQuery}
           onChange={(e) => setInputQuery(e.target.value)}

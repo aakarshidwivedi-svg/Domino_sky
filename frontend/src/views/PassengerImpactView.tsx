@@ -152,6 +152,7 @@ export const PassengerImpactView: React.FC = () => {
           <div className="flex items-center gap-1.5 text-xs text-slate-400 pl-2">
             <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
             <select
+              id="passenger-hub-filter"
               value={selectedHub}
               onChange={(e) => setSelectedHub(e.target.value)}
               aria-label="Filter connection banks by hub airport"
@@ -170,6 +171,7 @@ export const PassengerImpactView: React.FC = () => {
         <div className="relative w-full sm:w-64">
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" aria-hidden="true" />
           <input
+            id="passenger-connection-search"
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}

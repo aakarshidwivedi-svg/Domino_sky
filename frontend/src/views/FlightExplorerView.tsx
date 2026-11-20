@@ -82,6 +82,7 @@ export const FlightExplorerView: React.FC = () => {
           <div className="relative">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" aria-hidden="true" />
             <input
+              id="flight-explorer-search"
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -93,6 +94,7 @@ export const FlightExplorerView: React.FC = () => {
 
           {/* Status Filter */}
           <select
+            id="flight-status-filter"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             aria-label="Filter flights by operational status"
@@ -107,6 +109,7 @@ export const FlightExplorerView: React.FC = () => {
 
           {/* Airport Filter */}
           <select
+            id="flight-airport-filter"
             value={airportFilter}
             onChange={(e) => setAirportFilter(e.target.value)}
             aria-label="Filter flights by airport"
