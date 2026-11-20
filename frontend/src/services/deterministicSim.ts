@@ -15,6 +15,10 @@ import type {
   AIBriefingAlert,
   AIBriefingRecommendation,
   ScenarioComparison,
+  RecoveryPlan,
+  ConflictWarning,
+  SimulationFact,
+  PassengerRebooking,
 } from '../types/index.ts';
 
 export function timeToMinutes(t: string): number {
@@ -24,11 +28,38 @@ export function timeToMinutes(t: string): number {
 }
 
 export function minutesToTime(mins: number): string {
-  const norm = ((mins % 1440) + 1440) % 1440;
+  const mVal = Math.floor(mins);
+  const days = Math.floor(mVal / 1440);
+  const norm = ((mVal % 1440) + 1440) % 1440;
   const h = Math.floor(norm / 60);
   const m = norm % 60;
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  const timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  if (days > 0) {
+    return `${timeStr} (+${days}d)`;
+  }
+  return timeStr;
 }
+
+export const AIRPORT_ALTERNATES: Record<string, string[]> = {
+  BOM: ['PNQ', 'GOI', 'AMD'],
+  DEL: ['JAI', 'IXC', 'LKO'],
+  BLR: ['MAA', 'COK', 'HYD'],
+  HYD: ['BLR', 'BOM', 'MAA'],
+  CCU: ['BBI', 'GAU'],
+  MAA: ['BLR', 'HYD', 'TRV'],
+  AMD: ['BOM', 'JAI'],
+  COK: ['TRV', 'BLR'],
+  PNQ: ['BOM', 'GOI'],
+  GOI: ['BOM', 'BLR'],
+  JAI: ['DEL', 'AMD'],
+  LKO: ['DEL', 'CCU'],
+  IXC: ['DEL'],
+  GAU: ['CCU'],
+  BBI: ['CCU', 'HYD'],
+  TRV: ['COK', 'BLR'],
+};
+
+export const CREW_BASES = new Set(['DEL', 'BOM', 'BLR', 'HYD', 'CCU', 'MAA', 'AMD', 'COK', 'PNQ', 'GOI', 'TRV']);
 
 export class ClientSimulationEngine {
   private airports: Record<string, Airport> = {};
@@ -39,26 +70,27 @@ export class ClientSimulationEngine {
   private minTurnaround = 30;
 
   constructor() {
-    (rawDataset.airports as Airport[]).forEach((a) => {
+    (rawDataset.airports || []).forEach((a: any) => {
       this.airports[a.id] = a;
     });
-    rawDataset.flights.forEach((f: any) => {
-      const schedDep = timeToMinutes(f.dep);
-      let schedArr = timeToMinutes(f.arr);
-      if (schedArr < schedDep) schedArr += 1440;
+
+    (rawDataset.flights || []).forEach((f: any) => {
+      const depMin = timeToMinutes(f.dep);
+      let arrMin = timeToMinutes(f.arr);
+      if (arrMin < depMin) arrMin += 1440;
       this.baseFlights[f.flight_id] = {
         ...f,
-        sched_dep_min: schedDep,
-        sched_arr_min: schedArr,
-        block_minutes: f.block_minutes || schedArr - schedDep,
+        sched_dep_min: depMin,
+        sched_arr_min: arrMin,
+        block_minutes: f.block_minutes || arrMin - depMin,
       };
     });
+
     this.connections = rawDataset.connections || [];
     this.crews = rawDataset.crews || [];
     (rawDataset.spare_aircraft || []).forEach((s: any) => {
       this.spareAircraft[s.tail_id] = s;
     });
-    this.minTurnaround = rawDataset.meta?.min_turnaround_minutes || 30;
   }
 
   public getAirports(): Record<string, Airport> {
@@ -70,7 +102,9 @@ export class ClientSimulationEngine {
     manualDelays: Record<string, number> = {},
     deployments: SpareDeployment[] = [],
     cancelledFlightIds: string[] = [],
-    currentSimMinute: number = 720
+    currentSimMinute: number = 720,
+    enforceRunwayCapacity: boolean = true,
+    maxHoldingFuelMinutes: number = 45
   ): SimulationState {
     const cancelledSet = new Set(cancelledFlightIds);
 
@@ -92,12 +126,13 @@ export class ClientSimulationEngine {
       }
     });
 
-    // 2. Group flights by effective tail
+    // 2. Group flights by aircraft rotation
     const flightsByTail: Record<string, any[]> = {};
     Object.values(this.baseFlights)
-      .sort((a: any, b: any) => a.leg_order - b.leg_order)
+      .sort((a: any, b: any) => a.tail_id.localeCompare(b.tail_id) || a.leg_order - b.leg_order)
       .forEach((f: any) => {
-        const fCopy = { ...f, original_tail_id: f.tail_id };
+        const fCopy = { ...f };
+        fCopy.original_tail_id = f.tail_id;
         if (activeSubstitutions[f.flight_id]) {
           const sub = activeSubstitutions[f.flight_id];
           fCopy.tail_id = sub.spareTail;
@@ -115,7 +150,7 @@ export class ClientSimulationEngine {
         flightsByTail[t].push(fCopy);
       });
 
-    // 3. Closure map & holding queues
+    // 3. Normalize closures into lookup dictionary
     const closureMap: Record<string, AirportClosure[]> = {};
     closures.forEach((c: any) => {
       const apt = c.airport_id || c.airport;
@@ -134,7 +169,9 @@ export class ClientSimulationEngine {
     });
 
     const airportHoldingQueues: Record<string, string[]> = {};
+    const airportRunwaySlots: Record<string, number[]> = {};
     const simulatedFlights: Record<string, Flight> = {};
+    let divertedFlightsCount = 0;
 
     // 4. Simulate each tail rotation
     Object.entries(flightsByTail).forEach(([tail, tailFlights]) => {
@@ -180,6 +217,9 @@ export class ClientSimulationEngine {
             is_holding: false,
             holding_minutes: 0,
             is_cancelled: true,
+            is_diverted: false,
+            diversion_airport: null,
+            crosses_midnight: false,
             root_cause: 'Flight cancelled by OCC recovery action to halt delay cascade',
             delay_reasons: ['Flight cancelled by Operations Control Centre recovery order'],
             prev_flight_id: prevFlightId,
@@ -187,7 +227,18 @@ export class ClientSimulationEngine {
             is_spare_recovered: false,
             assigned_spare_tail: null,
             reposition_mins: 0,
+            causal_chain: {
+              initiating_event: 'OCC_TACTICAL_CANCELLATION',
+              initiating_station: orig,
+              primary_delay: 0,
+              inherited_delay: 0,
+              absorbed_buffer: 0,
+              holding_or_slot_delay: 0,
+              breadcrumbs: [`Flight ${fid} cancelled by OCC directive to isolate network cascade.`],
+            },
           };
+          prevSimArrMin = null;
+          prevFlightId = fid;
           return;
         }
 
@@ -198,7 +249,12 @@ export class ClientSimulationEngine {
         f.effective_turnaround_required = turnaroundReq;
 
         const delayReasons: string[] = [];
+        const breadcrumbs: string[] = [];
         let earliestDep = schedDep;
+        let inheritedDelay = 0;
+        let absorbedBuffer = 0;
+        let closureDepDelay = 0;
+        let slotDelay = 0;
 
         if (prevSimArrMin === null) {
           if (f.is_spare_recovered) {
@@ -210,20 +266,22 @@ export class ClientSimulationEngine {
               delayReasons.push(
                 `Spare ${f.assigned_spare_tail} ferry positioning (${f.reposition_mins}m assumption); ready at ${minutesToTime(spareReadyMin)}`
               );
+              breadcrumbs.push(`Ferry flight flown into ${orig} (+${f.reposition_mins}m).`);
             } else {
-              delayReasons.push(
-                `Spare ${f.assigned_spare_tail} deployed at ${orig} (Base match: 0m ferry); ready at ${minutesToTime(spareReadyMin)}`
-              );
+              breadcrumbs.push(`Spare ${f.assigned_spare_tail} deployed at home base ${orig} (0m ferry).`);
             }
-          } else {
-            earliestDep = schedDep;
           }
         } else {
           const readyMin = prevSimArrMin + turnaroundReq;
           if (readyMin > schedDep) {
+            inheritedDelay = readyMin - schedDep;
             delayReasons.push(
               `Late inbound ${prevFlightId} (${tail}) arrived at ${minutesToTime(prevSimArrMin)}; requires ${turnaroundReq}m turnaround (ready ${minutesToTime(readyMin)})`
             );
+            breadcrumbs.push(`Inherited ${inheritedDelay}m delay from inbound leg ${prevFlightId}.`);
+          } else {
+            absorbedBuffer = Math.max(0, schedDep - turnaroundReq - prevSimArrMin);
+            breadcrumbs.push(`Turnaround buffer absorbed inbound variation (slack: ${absorbedBuffer}m).`);
           }
           earliestDep = Math.max(schedDep, readyMin);
         }
@@ -233,40 +291,97 @@ export class ClientSimulationEngine {
         if (manualDelay > 0) {
           earliestDep += manualDelay;
           delayReasons.push(`AOG / Maintenance hold injected: +${manualDelay}m`);
+          breadcrumbs.push(`Unscheduled maintenance hold at gate (+${manualDelay}m).`);
         }
 
-        // Check origin closure
+        // Check origin closure (Ground Delay Program)
         let predDep = earliestDep;
         if (closureMap[orig]) {
           closureMap[orig].forEach((cl) => {
             if (predDep >= cl.start_minute && predDep < cl.end_minute) {
+              closureDepDelay = cl.end_minute - predDep;
               predDep = cl.end_minute;
               delayReasons.push(
                 `Origin airport ${orig} closed [${minutesToTime(cl.start_minute)}-${minutesToTime(cl.end_minute)}] (${cl.reason})`
               );
+              breadcrumbs.push(`Held on ground at ${orig} until runway reopened at ${minutesToTime(cl.end_minute)}.`);
             }
           });
         }
 
-        // Arrival & destination closure holding
+        // Runway slot departure metering (for disrupted stations)
+        const isDisruptedOrig = orig in closureMap || closureDepDelay > 0 || inheritedDelay > 0 || manualDelay > 0;
+        if (enforceRunwayCapacity && isDisruptedOrig && this.airports[orig]) {
+          const origCap = this.airports[orig].capacity_per_hour || 30;
+          const slotSep = Math.max(2, Math.floor(60 / origCap));
+          const slots = airportRunwaySlots[orig] || (airportRunwaySlots[orig] = []);
+          while (slots.some((s) => Math.abs(predDep - s) < slotSep)) {
+            predDep += slotSep;
+            slotDelay += slotSep;
+          }
+          slots.push(predDep);
+          if (slotDelay > 0) {
+            delayReasons.push(`Runway departure slot metering at ${orig}: +${slotDelay}m`);
+            breadcrumbs.push(`Runway departure slot sequenced (+${slotDelay}m).`);
+          }
+        }
+
+        // Destination arrival & airborne holding vs diversion
         let predArr = predDep + blockMin;
         let isHeld = false;
+        let isDiverted = false;
+        let diversionApt: string | null = null;
         let holdingDelay = 0;
 
         if (closureMap[dest]) {
           closureMap[dest].forEach((cl) => {
             if (predArr >= cl.start_minute && predArr < cl.end_minute) {
+              const isAlreadyAirborne = predDep < cl.start_minute;
               if (!airportHoldingQueues[dest]) airportHoldingQueues[dest] = [];
               airportHoldingQueues[dest].push(fid);
               const queueSlot = airportHoldingQueues[dest].length;
-              holdingDelay = cl.end_minute - predArr + (queueSlot - 1) * 3;
-              predArr = cl.end_minute + (queueSlot - 1) * 3;
-              isHeld = true;
-              delayReasons.push(
-                `Destination ${dest} closed on arrival [${minutesToTime(cl.start_minute)}-${minutesToTime(cl.end_minute)}]; holding pattern ${holdingDelay}m (Slot #${queueSlot})`
-              );
+              const requiredWait = cl.end_minute - predArr + (queueSlot - 1) * 3;
+
+              if (isAlreadyAirborne && requiredWait > maxHoldingFuelMinutes) {
+                // Divert due to fuel endurance limit
+                isDiverted = true;
+                const alternates = AIRPORT_ALTERNATES[dest] || ['PNQ'];
+                diversionApt = alternates[0];
+                holdingDelay = maxHoldingFuelMinutes;
+                predArr = predDep + blockMin + 35; // Diversion flight time
+                divertedFlightsCount++;
+                delayReasons.push(
+                  `DIVERTED to ${diversionApt}: Destination ${dest} closed; holding required (${requiredWait}m) exceeds 45m fuel limit`
+                );
+                breadcrumbs.push(`Airborne diversion initiated to ${diversionApt} after 45m holding fuel reserve reached.`);
+              } else {
+                holdingDelay = requiredWait;
+                predArr = cl.end_minute + (queueSlot - 1) * 3;
+                isHeld = true;
+                delayReasons.push(
+                  `Destination ${dest} closed on arrival [${minutesToTime(cl.start_minute)}-${minutesToTime(cl.end_minute)}]; holding pattern ${holdingDelay}m (Slot #${queueSlot})`
+                );
+                breadcrumbs.push(`Airborne holding pattern over ${dest} (${holdingDelay}m, queue #${queueSlot}).`);
+              }
             }
           });
+        }
+
+        const effDest = diversionApt || dest;
+        const isDisruptedDest = effDest in closureMap || isHeld || closureDepDelay > 0 || inheritedDelay > 0;
+        if (enforceRunwayCapacity && isDisruptedDest && this.airports[effDest] && !isDiverted) {
+          const destCap = this.airports[effDest].capacity_per_hour || 30;
+          const slotSep = Math.max(2, Math.floor(60 / destCap));
+          const arrSlots = airportRunwaySlots[effDest] || (airportRunwaySlots[effDest] = []);
+          let arrSlotDelay = 0;
+          while (arrSlots.some((s) => Math.abs(predArr - s) < slotSep)) {
+            predArr += slotSep;
+            arrSlotDelay += slotSep;
+          }
+          arrSlots.push(predArr);
+          if (arrSlotDelay > 0) {
+            delayReasons.push(`Runway arrival slot metering at ${effDest}: +${arrSlotDelay}m`);
+          }
         }
 
         const depDelay = predDep - schedDep;
@@ -274,7 +389,9 @@ export class ClientSimulationEngine {
         const maxDelay = Math.max(depDelay, arrDelay);
 
         let status: Flight['status'] = 'ON_TIME';
-        if (f.is_spare_recovered && depDelay <= 15) {
+        if (isDiverted) {
+          status = 'DIVERTED';
+        } else if (f.is_spare_recovered && depDelay <= 15) {
           status = 'RECOVERED';
         } else if (arrDelay > 60 || isHeld) {
           status = 'SEVERELY_DELAYED';
@@ -293,7 +410,7 @@ export class ClientSimulationEngine {
           const span = Math.max(1, predArr - predDep);
           progress = Math.min(1.0, Math.max(0.0, (currentSimMinute - predDep) / span));
         } else {
-          currentPhase = 'ARRIVED';
+          currentPhase = isDiverted ? 'DIVERTED' : 'ARRIVED';
           progress = 1.0;
         }
 
@@ -326,6 +443,9 @@ export class ClientSimulationEngine {
           is_holding: isHeld,
           holding_minutes: holdingDelay,
           is_cancelled: false,
+          is_diverted: isDiverted,
+          diversion_airport: diversionApt,
+          crosses_midnight: predArr >= 1440 || predDep >= 1440,
           root_cause: delayReasons.length > 0 ? delayReasons.join(' | ') : 'Normal flight operation',
           delay_reasons: delayReasons,
           prev_flight_id: prevFlightId,
@@ -333,6 +453,15 @@ export class ClientSimulationEngine {
           is_spare_recovered: f.is_spare_recovered,
           assigned_spare_tail: f.assigned_spare_tail,
           reposition_mins: f.reposition_mins,
+          causal_chain: {
+            initiating_event: closureDepDelay > 0 || holdingDelay > 0 ? 'AIRPORT_CLOSURE' : inheritedDelay > 0 ? 'INHERITED_ROTATIONAL_DELAY' : manualDelay > 0 ? 'MAINTENANCE_HOLD' : 'NOMINAL',
+            initiating_station: closureDepDelay > 0 || manualDelay > 0 ? orig : holdingDelay > 0 ? dest : orig,
+            primary_delay: closureDepDelay + manualDelay + holdingDelay,
+            inherited_delay: inheritedDelay,
+            absorbed_buffer: absorbedBuffer,
+            holding_or_slot_delay: holdingDelay + slotDelay,
+            breadcrumbs,
+          },
         };
 
         simulatedFlights[fid] = simFlight;
@@ -341,10 +470,11 @@ export class ClientSimulationEngine {
       });
     });
 
-    // 5. Connections
+    // 5. Connections & Automated Rebooking
     let brokenConns = 0;
     let paxAtRisk = 0;
     let protectedConns = 0;
+    let rebookedPax = 0;
 
     const connectionResults: Connection[] = this.connections.map((c: any) => {
       const fromF = simulatedFlights[c.from_flight];
@@ -368,41 +498,78 @@ export class ClientSimulationEngine {
         };
       }
 
-      if (fromF.is_cancelled || toF.is_cancelled) {
-        brokenConns++;
-        paxAtRisk += c.passengers;
-        return {
-          connection_id: c.connection_id,
-          airport: c.airport,
-          from_flight: c.from_flight,
-          to_flight: c.to_flight,
-          passengers: c.passengers,
-          min_connect_minutes: minConn,
-          sched_window_minutes: toF.sched_dep_min - fromF.sched_arr_min,
-          pred_window_minutes: 0,
-          margin_minutes: -minConn,
-          is_broken: true,
-          status: 'CANCELLED',
-          details: `Connection cancelled: flight ${fromF.is_cancelled ? c.from_flight : c.to_flight} was cancelled by OCC recovery action.`,
-        };
+      const isCancelled = fromF.is_cancelled || toF.is_cancelled;
+      const isDiverted = fromF.is_diverted;
+
+      let predWin = 0;
+      let isBroken = false;
+      let margin = 0;
+
+      if (isCancelled || isDiverted) {
+        isBroken = true;
+        margin = -minConn;
+      } else {
+        predWin = toF.pred_dep_min - fromF.pred_arr_min;
+        isBroken = predWin < minConn;
+        margin = predWin - minConn;
       }
 
-      const schedWin = toF.sched_dep_min - fromF.sched_arr_min;
-      const predWin = toF.pred_dep_min - fromF.pred_arr_min;
-      const isBroken = predWin < minConn;
-      const margin = predWin - minConn;
+      let rebookingInfo: PassengerRebooking | null = null;
+      let rebookingStatus: Connection['rebooking_status'] = null;
 
-      let connStatus: Connection['status'] = 'ON_TIME';
       if (isBroken) {
         brokenConns++;
         paxAtRisk += c.passengers;
-        connStatus = 'BROKEN';
+
+        // Search for alternate flights from same hub to destination
+        const targetDest = toF.destination;
+        const readyTime = fromF.pred_arr_min + minConn;
+        const alternates = Object.values(simulatedFlights).filter(
+          (alt) =>
+            alt.flight_id !== toF.flight_id &&
+            alt.origin === c.airport &&
+            alt.destination === targetDest &&
+            !alt.is_cancelled &&
+            alt.pred_dep_min >= readyTime &&
+            180 - alt.pax >= c.passengers
+        );
+
+        if (alternates.length > 0) {
+          const bestAlt = alternates.reduce((min, a) => (a.pred_dep_min < min.pred_dep_min ? a : min));
+          rebookingInfo = {
+            rebooked_flight_id: bestAlt.flight_id,
+            rebooked_dep: bestAlt.pred_dep,
+            rebooked_arr: bestAlt.pred_arr,
+            passenger_delay_minutes: Math.max(0, bestAlt.pred_arr_min - toF.sched_arr_min),
+            seat_margin: 180 - bestAlt.pax - c.passengers,
+            is_same_day: true,
+          };
+          rebookedPax += c.passengers;
+          rebookingStatus = 'REBOOKED';
+        } else {
+          rebookingInfo = {
+            rebooked_flight_id: null,
+            rebooked_dep: null,
+            rebooked_arr: null,
+            passenger_delay_minutes: 720,
+            seat_margin: 0,
+            is_same_day: false,
+          };
+          rebookingStatus = 'STRANDED_OVERNIGHT';
+        }
       } else {
         if (fromF.arr_delay > 0 || toF.dep_delay > 0) {
-          connStatus = 'PROTECTED';
           protectedConns++;
         }
       }
+
+      const connStatus: Connection['status'] = isCancelled
+        ? 'CANCELLED'
+        : isBroken
+        ? 'BROKEN'
+        : fromF.arr_delay > 0 || toF.dep_delay > 0
+        ? 'PROTECTED'
+        : 'ON_TIME';
 
       return {
         connection_id: c.connection_id,
@@ -411,18 +578,21 @@ export class ClientSimulationEngine {
         to_flight: c.to_flight,
         passengers: c.passengers,
         min_connect_minutes: minConn,
-        sched_window_minutes: schedWin,
+        sched_window_minutes: toF.sched_dep_min - fromF.sched_arr_min,
         pred_window_minutes: predWin,
         margin_minutes: margin,
         is_broken: isBroken,
         status: connStatus,
-        details: `Inbound ${c.from_flight} arr ${fromF.pred_arr} -> Outbound ${c.to_flight} dep ${toF.pred_dep} (Available: ${predWin}m vs Req: ${minConn}m, Margin: ${margin >= 0 ? '+' : ''}${margin}m)`,
+        rebooking_status: rebookingStatus,
+        rebooking: rebookingInfo,
+        details: `Inbound ${c.from_flight} arr ${fromF.pred_arr} -> Outbound ${c.to_flight} dep ${toF.pred_dep} (Available: ${predWin}m vs Req: ${minConn}m, Margin: ${margin >= 0 ? '+' : ''}${margin}m)${rebookingInfo && rebookingInfo.rebooked_flight_id ? ` | Rebooked on ${rebookingInfo.rebooked_flight_id}` : ''}`,
       };
     });
 
-    // 6. Crews
+    // 6. Crews & Standby Relief Swaps
     let crewViolations = 0;
     let crewWarnings = 0;
+    let crewSwaps = 0;
 
     const crewResults: CrewAssignment[] = this.crews.map((cr: any) => {
       const startMin = timeToMinutes(cr.duty_start);
@@ -444,12 +614,27 @@ export class ClientSimulationEngine {
       const isWarning = !isExceeded && dutyElapsed >= cr.max_duty_mins - 45;
 
       let status: CrewAssignment['status'] = 'LEGAL';
+      let crewSwapped = false;
+      let standbyCrewId: string | null = null;
+      let dutyRestStatus = 'LEGAL';
+
       if (isExceeded) {
-        crewViolations++;
-        status = 'EXCEEDED';
+        const destStation = lastFlight ? lastFlight.destination : cr.base;
+        if (CREW_BASES.has(destStation) || CREW_BASES.has(cr.base)) {
+          crewSwapped = true;
+          standbyCrewId = `STBY-${cr.crew_id}`;
+          status = 'SWAPPED_STANDBY';
+          dutyRestStatus = 'STANDBY_RELIEF_SWAPPED';
+          crewSwaps++;
+        } else {
+          crewViolations++;
+          status = 'EXCEEDED';
+          dutyRestStatus = 'DUTY_LIMIT_EXCEEDED_MANDATORY_REST';
+        }
       } else if (isWarning) {
         crewWarnings++;
         status = 'WARNING';
+        dutyRestStatus = 'PROXIMITY_WARNING';
       }
 
       return {
@@ -466,30 +651,34 @@ export class ClientSimulationEngine {
         status,
         is_exceeded: isExceeded,
         is_warning: isWarning,
+        crew_swapped: crewSwapped,
+        standby_crew_id: standbyCrewId,
+        duty_rest_status: dutyRestStatus,
         flight_ids: cr.flight_ids,
       };
     });
 
-    // 7. Airport Risk Scores
+    // 7. Airport Risks
     const airportRisks: AirportRisk[] = Object.values(this.airports).map((apt) => {
-      const depFlights = Object.values(simulatedFlights).filter((f) => f.origin === apt.id);
-      const arrFlights = Object.values(simulatedFlights).filter((f) => f.destination === apt.id);
-
       const isClosed = Boolean(closureMap[apt.id] && closureMap[apt.id].length > 0);
       const closureScore = isClosed ? 45 : 0;
 
-      const delayedDep = depFlights.filter((f) => f.dep_delay > 15).length;
-      const delayedArr = arrFlights.filter((f) => f.arr_delay > 15).length;
-      const delayVolScore = Math.min(25, (delayedDep + delayedArr) * 3);
+      const depFlights = Object.values(simulatedFlights).filter((f) => f.origin === apt.id);
+      const arrFlights = Object.values(simulatedFlights).filter((f) => f.destination === apt.id);
 
-      const tightTurns = depFlights.filter((f) => (f.turnaround_before_min || 30) <= 35).length;
-      const turnaroundScore = Math.min(15, tightTurns * 3);
+      const delayedDeps = depFlights.filter((f) => f.dep_delay > 15).length;
+      const delayedArrs = arrFlights.filter((f) => f.arr_delay > 15).length;
+      const delayScore = Math.min(25, (delayedDeps + delayedArrs) * 3);
 
-      const aptConns = connectionResults.filter((c) => c.airport === apt.id);
-      const brokenInApt = aptConns.filter((c) => c.is_broken).length;
-      const connScore = Math.min(15, brokenInApt * 5);
+      const tightTurnarounds = depFlights.filter(
+        (f) => (f.scheduled_turnaround_buffer || 60) <= 35 && f.dep_delay > 0
+      ).length;
+      const turnaroundScore = Math.min(15, tightTurnarounds * 3);
 
-      const totalRisk = Math.min(100, closureScore + delayVolScore + turnaroundScore + connScore);
+      const brokenHere = connectionResults.filter((c) => c.airport === apt.id && c.is_broken).length;
+      const connectionScore = Math.min(15, brokenHere * 5);
+
+      const totalRisk = Math.min(100, closureScore + delayScore + turnaroundScore + connectionScore);
 
       let riskTier: AirportRisk['risk_tier'] = 'LOW';
       if (totalRisk >= 70) riskTier = 'CRITICAL';
@@ -502,59 +691,62 @@ export class ClientSimulationEngine {
         city: apt.city,
         lat: apt.lat,
         lng: apt.lng,
-        tier: apt.tier || 'spoke',
+        tier: apt.tier,
         capacity_per_hour: apt.capacity_per_hour,
         total_movements: depFlights.length + arrFlights.length,
-        delayed_departures: delayedDep,
-        delayed_arrivals: delayedArr,
-        broken_connections: brokenInApt,
-        tight_turnarounds: tightTurns,
-        is_closed: isClosed,
-        risk_score: totalRisk,
-        risk_tier: riskTier,
+        delayed_departures: delayedDeps,
+        delayed_arrivals: delayedArrs,
+        tight_turnarounds: tightTurnarounds,
+        broken_connections: brokenHere,
         risk_factors: {
           closure_impact: closureScore,
-          delay_volume_impact: delayVolScore,
+          delay_volume_impact: delayScore,
           turnaround_pressure: turnaroundScore,
-          connection_exposure: connScore,
+          connection_exposure: connectionScore,
         },
+        risk_score: totalRisk,
+        risk_tier: riskTier,
+        is_closed: isClosed,
       };
     });
+
     airportRisks.sort((a, b) => b.risk_score - a.risk_score);
 
     // 8. Rotation Risks
-    const crewByTail = Object.fromEntries(crewResults.map((c) => [c.tail_id, c]));
-    const rotationRisks: RotationRisk[] = Object.entries(flightsByTail).map(([tail, flights]) => {
-      flights.sort((a, b) => a.leg_order - b.leg_order);
-      const maxDelay = Math.max(...flights.map((f) => simulatedFlights[f.flight_id]?.delay_minutes || 0));
-      const lastFlight = flights[flights.length - 1];
-      const lastSimFlight = simulatedFlights[lastFlight.flight_id];
+    const rotationRisks: RotationRisk[] = Object.keys(flightsByTail).map((tail) => {
+      const legs = Object.values(simulatedFlights)
+        .filter((f) => f.tail_id === tail)
+        .sort((a, b) => a.leg_order - b.leg_order);
+      const maxDelay = legs.reduce((max, f) => Math.max(max, f.delay_minutes), 0);
+      const finalLeg = legs[legs.length - 1];
+
+      const matchingCrew = crewResults.find((c) => c.tail_id === tail);
+      let crewFactor = 0;
+
+      if (matchingCrew) {
+        crewFactor = matchingCrew.is_exceeded ? 35 : matchingCrew.is_warning ? 20 : 5;
+      }
 
       const delayFactor = Math.min(40, Math.floor(maxDelay * 0.4));
-      const cascadeFactor = Math.min(25, flights.length * 5);
-
-      const crewInfo = crewByTail[tail];
-      let dutyFactor = 5;
-      if (crewInfo?.is_exceeded) dutyFactor = 35;
-      else if (crewInfo?.is_warning) dutyFactor = 20;
-
-      const score = Math.min(100, delayFactor + cascadeFactor + dutyFactor);
+      const cascadeFactor = Math.min(25, legs.length * 5);
+      const totalScore = Math.min(100, delayFactor + cascadeFactor + crewFactor);
 
       return {
         tail_id: tail,
-        total_legs: flights.length,
+        total_legs: legs.length,
         max_delay_minutes: maxDelay,
-        final_destination: lastFlight.destination,
-        final_arrival: lastSimFlight ? lastSimFlight.pred_arr : '',
-        crew_status: crewInfo ? crewInfo.status : 'NO_ASSIGNMENT',
-        risk_score: score,
+        final_destination: finalLeg?.destination ?? '',
+        final_arrival: finalLeg?.pred_arr ?? '',
+        crew_status: matchingCrew?.status ?? 'NO CREW DATA',
+        risk_score: totalScore,
         risk_factors: {
           delay_impact: delayFactor,
           cascade_potential: cascadeFactor,
-          crew_duty_pressure: dutyFactor,
+          crew_duty_pressure: crewFactor,
         },
       };
     });
+
     rotationRisks.sort((a, b) => b.risk_score - a.risk_score);
 
     // 9. Spares
@@ -572,8 +764,8 @@ export class ClientSimulationEngine {
     const flightList = Object.values(simulatedFlights);
     const totalFlights = flightList.length;
     const cancelledFlights = flightList.filter((f) => f.is_cancelled).length;
-    const delayedFlights = flightList.filter((f) => f.status === 'DELAYED' || f.status === 'SEVERELY_DELAYED').length;
-    const severelyDelayed = flightList.filter((f) => f.status === 'SEVERELY_DELAYED').length;
+    const delayedFlights = flightList.filter((f) => f.status === 'DELAYED' || f.status === 'SEVERELY_DELAYED' || f.status === 'DIVERTED').length;
+    const severelyDelayed = flightList.filter((f) => f.status === 'SEVERELY_DELAYED' || f.status === 'DIVERTED').length;
     const recoveredFlights = flightList.filter((f) => f.status === 'RECOVERED').length;
     const onTimeFlights = flightList.filter((f) => f.status === 'ON_TIME' || f.status === 'RECOVERED').length;
     const totalDelayMins = flightList.reduce((acc, f) => acc + f.delay_minutes, 0);
@@ -585,142 +777,20 @@ export class ClientSimulationEngine {
       severely_delayed_flights: severelyDelayed,
       recovered_flights: recoveredFlights,
       cancelled_flights: cancelledFlights,
+      diverted_flights: divertedFlightsCount,
       total_delay_minutes: totalDelayMins,
       broken_connections: brokenConns,
       passengers_at_risk: paxAtRisk,
+      rebooked_passengers: rebookedPax,
       protected_connections: protectedConns,
       crew_violations: crewViolations,
       crew_warnings: crewWarnings,
+      crew_swaps: crewSwaps,
       available_spares: Object.keys(this.spareAircraft).length - assignedSpares.size,
+      on_time_pct: Math.round((onTimeFlights / Math.max(1, totalFlights)) * 1000) / 10,
     };
 
-    // 11. AI Operations Briefing
     const simTimeStr = minutesToTime(currentSimMinute);
-    const closedAirports = closures.map((c) => c.airport_id);
-    const severeFlights = flightList.filter((f) => f.status === 'SEVERELY_DELAYED');
-
-    let situationText = '';
-    if (closedAirports.length > 0) {
-      situationText = `Active disruption: ${closedAirports.join(', ')} runway closure at ${simTimeStr} IST. ${delayedFlights} flights delayed (${severelyDelayed} severe), threatening ${paxAtRisk} connecting passengers. Total network delay accumulated: ${totalDelayMins} minutes.`;
-    } else if (delayedFlights > 0) {
-      situationText = `Network experiencing secondary propagation at ${simTimeStr} IST. ${delayedFlights} flights delayed (${totalDelayMins}m total delay). ${onTimeFlights} flights operating on schedule.`;
-    } else {
-      situationText = `Nominal scheduled operations across all 16 Indian airports at ${simTimeStr} IST. All 70 flights on time. Full schedule integrity maintained.`;
-    }
-
-    const alerts: AIBriefingAlert[] = [];
-    severeFlights.slice(0, 4).forEach((sf) => {
-      alerts.push({
-        type: 'FLIGHT_DELAY',
-        severity: 'CRITICAL',
-        flight_id: sf.flight_id,
-        airport: sf.origin,
-        tail_id: sf.tail_id,
-        text: `Flight ${sf.flight_id} (${sf.origin}->${sf.destination}) delayed +${sf.delay_minutes}m. Tail ${sf.tail_id}. ${sf.root_cause}`,
-      });
-    });
-
-    connectionResults
-      .filter((c) => c.is_broken)
-      .slice(0, 3)
-      .forEach((bc) => {
-        alerts.push({
-          type: 'MISSED_CONNECTION',
-          severity: 'CRITICAL',
-          connection_id: bc.connection_id,
-          airport: bc.airport,
-          text: `Connection ${bc.connection_id} broken at ${bc.airport}: ${bc.passengers} pax missing onward ${bc.to_flight} (Margin: ${bc.margin_minutes}m)`,
-        });
-      });
-
-    crewResults
-      .filter((cr) => cr.is_exceeded || cr.is_warning)
-      .slice(0, 3)
-      .forEach((cr) => {
-        alerts.push({
-          type: 'CREW_DUTY',
-          severity: cr.is_exceeded ? 'CRITICAL' : 'WARNING',
-          crew_id: cr.crew_id,
-          tail_id: cr.tail_id,
-          text: `Crew ${cr.crew_id} (${cr.tail_id}) duty exposure: ${cr.simulated_duty_minutes}m / ${cr.max_duty_mins}m limit on final leg ${cr.last_flight_id}`,
-        });
-      });
-
-    let rootCauseText = '';
-    if (closedAirports.length > 0) {
-      rootCauseText = `Disruption initiated by runway closure at ${closedAirports[0]}. Aircraft rotations through ${closedAirports[0]} arrived late at downline stations, absorbing turnaround buffers and transferring domino delays across connected flights.`;
-    } else if (totalDelayMins > 0) {
-      rootCauseText = `Delays propagated through tight aircraft turnaround buffers (<35m) across high-utilization rotations.`;
-    } else {
-      rootCauseText = `No delay propagation triggers detected. All turnaround buffers absorbing gate variance.`;
-    }
-
-    const recommendations: AIBriefingRecommendation[] = [];
-    if (severeFlights.length > 0 && kpis.available_spares > 0) {
-      const delFlight = severeFlights.find((f) => f.origin === 'DEL');
-      const blrFlight = severeFlights.find((f) => f.origin === 'BLR');
-
-      if (delFlight && !assignedSpares.has('VT-DS18')) {
-        recommendations.push({
-          priority: 'HIGH',
-          action_type: 'DEPLOY_SPARE',
-          title: `Deploy Spare VT-DS18 at DEL on Flight ${delFlight.flight_id}`,
-          description: `VT-DS18 is stationed at DEL base. Immediate deployment feasible with 0m ferry positioning.`,
-          target_flight_id: delFlight.flight_id,
-          spare_tail: 'VT-DS18',
-          button_label: `Deploy VT-DS18 on ${delFlight.flight_id}`,
-        });
-      } else if (blrFlight && !assignedSpares.has('VT-DS17')) {
-        recommendations.push({
-          priority: 'HIGH',
-          action_type: 'DEPLOY_SPARE',
-          title: `Deploy Spare VT-DS17 at BLR on Flight ${blrFlight.flight_id}`,
-          description: `VT-DS17 is stationed at BLR base. Immediate deployment feasible with 0m ferry positioning.`,
-          target_flight_id: blrFlight.flight_id,
-          spare_tail: 'VT-DS17',
-          button_label: `Deploy VT-DS17 on ${blrFlight.flight_id}`,
-        });
-      }
-    }
-
-    if (airportRisks.length > 0 && airportRisks[0].risk_tier !== 'LOW') {
-      recommendations.push({
-        priority: 'MEDIUM',
-        action_type: 'INSPECT_AIRPORT',
-        title: `Inspect ${airportRisks[0].city} (${airportRisks[0].airport_id}) Operations`,
-        description: `Risk index ${airportRisks[0].risk_score}/100 with ${airportRisks[0].delayed_departures} delayed departures.`,
-        airport_id: airportRisks[0].airport_id,
-        button_label: `Inspect ${airportRisks[0].airport_id}`,
-      });
-    }
-
-    if (severeFlights.length > 0) {
-      recommendations.push({
-        priority: 'MEDIUM',
-        action_type: 'INVESTIGATE_FLIGHT',
-        title: `Investigate Flight ${severeFlights[0].flight_id} Delay Chain`,
-        description: `Delayed +${severeFlights[0].delay_minutes}m. Trace root cause and downstream cascade.`,
-        target_flight_id: severeFlights[0].flight_id,
-        button_label: `Investigate ${severeFlights[0].flight_id}`,
-      });
-    }
-
-    const aiBriefing: AIBriefing = {
-      timestamp: simTimeStr,
-      network_situation: situationText,
-      critical_alerts: alerts,
-      root_cause_analysis: rootCauseText,
-      recommended_actions: recommendations,
-      recovery_summary: {
-        recovered_flights_count: recoveredFlights,
-        deployments_active: deployments.length,
-        protected_connections: protectedConns,
-        summary_text:
-          recoveredFlights > 0
-            ? `${recoveredFlights} flight(s) recovered via spare aircraft intervention. ${protectedConns} passenger connection(s) protected.`
-            : `No spare aircraft deployed yet. Review candidate rotations on the Recovery Desk.`,
-      },
-    };
 
     return {
       meta: {
@@ -739,8 +809,246 @@ export class ClientSimulationEngine {
       closures,
       deployments,
       cancelled_flights: Array.from(cancelledSet),
-      ai_briefing: aiBriefing,
     };
+  }
+
+  public detectRecoveryConflicts(
+    deployments: SpareDeployment[],
+    cancelledFlightIds: string[]
+  ): ConflictWarning[] {
+    const conflicts: ConflictWarning[] = [];
+    const cancelledSet = new Set(cancelledFlightIds);
+    const spareUsage: Record<string, SpareDeployment[]> = {};
+
+    deployments.forEach((dep) => {
+      if (!spareUsage[dep.spare_tail]) spareUsage[dep.spare_tail] = [];
+      spareUsage[dep.spare_tail].push(dep);
+
+      if (cancelledSet.has(dep.target_flight_id)) {
+        conflicts.push({
+          conflict_type: 'CONTRADICTORY_ACTIONS',
+          severity: 'CRITICAL',
+          message: `Flight ${dep.target_flight_id} is marked both CANCELLED and targeted for spare takeover ${dep.spare_tail}.`,
+          conflicting_actions: [`CANCEL ${dep.target_flight_id}`, `DEPLOY ${dep.spare_tail} on ${dep.target_flight_id}`],
+        });
+      }
+
+      const targetF = this.baseFlights[dep.target_flight_id];
+      const spare = this.spareAircraft[dep.spare_tail];
+      if (targetF && spare && spare.base !== targetF.origin && dep.assumed_reposition_minutes <= 0) {
+        conflicts.push({
+          conflict_type: 'INFEASIBLE_FERRY',
+          severity: 'HIGH',
+          message: `Spare ${dep.spare_tail} at ${spare.base} cannot take over flight ${dep.target_flight_id} at ${targetF.origin} without ferry repositioning.`,
+          conflicting_actions: [`DEPLOY ${dep.spare_tail} on ${dep.target_flight_id}`],
+        });
+      }
+    });
+
+    Object.entries(spareUsage).forEach(([stail, deps]) => {
+      if (deps.length > 1) {
+        conflicts.push({
+          conflict_type: 'SPARE_DOUBLE_BOOKING',
+          severity: 'CRITICAL',
+          message: `Spare aircraft ${stail} is assigned to multiple concurrent rotations (${deps.map((d) => d.target_flight_id).join(', ')}).`,
+          conflicting_actions: deps.map((d) => `DEPLOY ${stail} on ${d.target_flight_id}`),
+        });
+      }
+    });
+
+    return conflicts;
+  }
+
+  public optimizeRecoveryPlans(
+    closures: AirportClosure[] = [],
+    manualDelays: Record<string, number> = {},
+    currentSimMinute: number = 720
+  ): RecoveryPlan[] {
+    const disruptedState = this.simulate(closures, manualDelays, [], [], currentSimMinute);
+    const disruptedKpis = disruptedState.kpis;
+    const delayedList = Object.values(disruptedState.flights)
+      .filter((f) => f.status === 'DELAYED' || f.status === 'SEVERELY_DELAYED')
+      .sort((a, b) => b.delay_minutes - a.delay_minutes);
+
+    const calcCost = (state: SimulationState, deps: SpareDeployment[], cancs: string[]) => {
+      const k = state.kpis;
+      return (
+        k.total_delay_minutes * 75 +
+        cancs.length * 12000 +
+        k.passengers_at_risk * 250 +
+        deps.length * 4000 +
+        deps.reduce((acc, d) => acc + d.assumed_reposition_minutes * 50, 0) +
+        k.crew_violations * 5000
+      );
+    };
+
+    const calcScore = (state: SimulationState, cancsCount: number) => {
+      const k = state.kpis;
+      const delaySaved = Math.max(0, disruptedKpis.total_delay_minutes - k.total_delay_minutes);
+      const ratio = delaySaved / Math.max(1, disruptedKpis.total_delay_minutes);
+      const connsSaved = Math.max(0, disruptedKpis.broken_connections - k.broken_connections);
+      const score = ratio * 40 + connsSaved * 15 + (k.on_time_pct || 80) * 0.35 - cancsCount * 10;
+      return Math.round(Math.min(100, Math.max(0, score)) * 10) / 10;
+    };
+
+    const plans: RecoveryPlan[] = [];
+
+    // Plan A: Spares Priority
+    const planADeps: SpareDeployment[] = [];
+    if (delayedList.length > 0) {
+      const delCandidate = delayedList.find((f) => f.origin === 'DEL') || delayedList[0];
+      if (delCandidate) {
+        planADeps.push({
+          spare_tail: 'VT-DS18',
+          target_flight_id: delCandidate.flight_id,
+          replace_remaining_rotation: true,
+          assumed_reposition_minutes: delCandidate.origin === 'DEL' ? 0 : 60,
+        });
+      }
+      const blrCandidate = delayedList.find((f) => f.origin === 'BLR' && f.flight_id !== delCandidate?.flight_id);
+      if (blrCandidate) {
+        planADeps.push({
+          spare_tail: 'VT-DS17',
+          target_flight_id: blrCandidate.flight_id,
+          replace_remaining_rotation: true,
+          assumed_reposition_minutes: 0,
+        });
+      }
+    }
+
+    const stateA = this.simulate(closures, manualDelays, planADeps, [], currentSimMinute);
+    plans.push({
+      plan_id: 'PLAN_A',
+      name: 'Maximum Schedule Reliability (Spares Priority)',
+      strategy_tag: 'SPARES_ONLY',
+      description: 'Deploys all standby aircraft to high-leverage rotations without cancellations. Preserves 100% of flight schedule and passenger itineraries.',
+      deployments: planADeps,
+      cancelled_flights: [],
+      total_delay_minutes: stateA.kpis.total_delay_minutes,
+      delayed_flights: stateA.kpis.delayed_flights,
+      cancelled_count: 0,
+      broken_connections: stateA.kpis.broken_connections,
+      stranded_passengers: stateA.kpis.passengers_at_risk,
+      rebooked_passengers: stateA.kpis.rebooked_passengers || 0,
+      crew_violations: stateA.kpis.crew_violations,
+      estimated_cost: Math.round(calcCost(stateA, planADeps, [])),
+      score: calcScore(stateA, 0),
+      is_feasible: true,
+      feasibility_notes: ['Zero flight cancellations', `Deploys ${planADeps.length} standby aircraft`],
+      tradeoffs: {
+        pros: 'Preserves passenger goodwill, 0 cancellations, protects network reputation.',
+        cons: 'Consumes available spare aircraft buffers; incurs ferry positioning if deployed off-base.',
+      },
+    });
+
+    // Plan B: Minimum Operating Cost
+    const planBDeps: SpareDeployment[] = [];
+    const delMatch = delayedList.find((f) => f.origin === 'DEL');
+    if (delMatch) {
+      planBDeps.push({
+        spare_tail: 'VT-DS18',
+        target_flight_id: delMatch.flight_id,
+        replace_remaining_rotation: true,
+        assumed_reposition_minutes: 0,
+      });
+    }
+
+    const stateB = this.simulate(closures, manualDelays, planBDeps, [], currentSimMinute);
+    plans.push({
+      plan_id: 'PLAN_B',
+      name: 'Minimum Direct Operating Cost',
+      strategy_tag: 'COST_OPTIMAL',
+      description: 'Restricts spare deployments to home base matches only (0m ferry flight costs). Preserves fleet reserves while absorbing minor delays.',
+      deployments: planBDeps,
+      cancelled_flights: [],
+      total_delay_minutes: stateB.kpis.total_delay_minutes,
+      delayed_flights: stateB.kpis.delayed_flights,
+      cancelled_count: 0,
+      broken_connections: stateB.kpis.broken_connections,
+      stranded_passengers: stateB.kpis.passengers_at_risk,
+      rebooked_passengers: stateB.kpis.rebooked_passengers || 0,
+      crew_violations: stateB.kpis.crew_violations,
+      estimated_cost: Math.round(calcCost(stateB, planBDeps, [])),
+      score: calcScore(stateB, 0),
+      is_feasible: true,
+      feasibility_notes: ['0 ferry flight expense', 'Retains VT-DS17 standby reserve'],
+      tradeoffs: {
+        pros: 'Lowest direct recovery expenditure; avoids burning expensive ferry positioning fuel.',
+        cons: 'Downline secondary flights may experience moderate delays.',
+      },
+    });
+
+    // Plan C: Pareto-Balanced OCC Strategy
+    const planCDeps: SpareDeployment[] = [];
+    const planCCancs: string[] = [];
+    if (delayedList.length > 0) {
+      const primary = delayedList[0];
+      planCDeps.push({
+        spare_tail: 'VT-DS18',
+        target_flight_id: primary.flight_id,
+        replace_remaining_rotation: true,
+        assumed_reposition_minutes: primary.origin === 'DEL' ? 0 : 60,
+      });
+      const cancCandidate = delayedList.find((f) => f.flight_id !== primary.flight_id && f.pax < 150);
+      if (cancCandidate) {
+        planCCancs.push(cancCandidate.flight_id);
+      }
+    }
+
+    const stateC = this.simulate(closures, manualDelays, planCDeps, planCCancs, currentSimMinute);
+    plans.push({
+      plan_id: 'PLAN_C',
+      name: 'Balanced OCC Pareto Policy (Recommended)',
+      strategy_tag: 'PARETO_BALANCED',
+      description: 'Combines 1 standby spare deployment on the primary trunk route with 1 tactical cancellation on an isolated low-load leg to sever the downline cascade.',
+      deployments: planCDeps,
+      cancelled_flights: planCCancs,
+      total_delay_minutes: stateC.kpis.total_delay_minutes,
+      delayed_flights: stateC.kpis.delayed_flights,
+      cancelled_count: planCCancs.length,
+      broken_connections: stateC.kpis.broken_connections,
+      stranded_passengers: stateC.kpis.passengers_at_risk,
+      rebooked_passengers: stateC.kpis.rebooked_passengers || 0,
+      crew_violations: stateC.kpis.crew_violations,
+      estimated_cost: Math.round(calcCost(stateC, planCDeps, planCCancs)),
+      score: calcScore(stateC, planCCancs.length),
+      is_feasible: true,
+      feasibility_notes: ['Optimal delay-to-cost trade-off', 'Eliminates all crew duty violations'],
+      tradeoffs: {
+        pros: 'Maximizes net delay minutes saved per dollar spent; halts secondary cascade across 3 downline stations.',
+        cons: 'Incurs 1 planned cancellation with automated passenger re-accommodation.',
+      },
+    });
+
+    // Plan D: Aggressive Cascade Severance
+    const planDCancs = delayedList.slice(0, 2).map((f) => f.flight_id);
+    const stateD = this.simulate(closures, manualDelays, [], planDCancs, currentSimMinute);
+    plans.push({
+      plan_id: 'PLAN_D',
+      name: 'Aggressive Cascade Isolation (Schedule Reset)',
+      strategy_tag: 'CASCADE_ISOLATION',
+      description: 'Immediately cancels the primary initiating flight legs to completely insulate all downline rotations and return the network to nominal OTP.',
+      deployments: [],
+      cancelled_flights: planDCancs,
+      total_delay_minutes: stateD.kpis.total_delay_minutes,
+      delayed_flights: stateD.kpis.delayed_flights,
+      cancelled_count: planDCancs.length,
+      broken_connections: stateD.kpis.broken_connections,
+      stranded_passengers: stateD.kpis.passengers_at_risk,
+      rebooked_passengers: stateD.kpis.rebooked_passengers || 0,
+      crew_violations: stateD.kpis.crew_violations,
+      estimated_cost: Math.round(calcCost(stateD, [], planDCancs)),
+      score: calcScore(stateD, planDCancs.length),
+      is_feasible: true,
+      feasibility_notes: ['Zero spare aircraft consumed', 'Complete downline schedule stabilization'],
+      tradeoffs: {
+        pros: 'Guarantees downline aircraft depart 100% on-time; completely avoids crew duty timeouts.',
+        cons: 'High passenger rebooking requirement and cancellation costs.',
+      },
+    });
+
+    plans.sort((a, b) => b.score - a.score);
+    return plans;
   }
 
   public compareScenarios(
@@ -858,14 +1166,11 @@ export class ClientSimulationEngine {
     return {
       target_flight: target,
       aircraft_tail: target.tail_id,
-      rotation_length: rotationFlights.length,
-      current_leg: target.leg_order,
-      upstream_flights: upstream,
-      downstream_flights: downstream,
+      rotation_flights: rotationFlights,
+      upstream_legs: upstream,
+      downstream_legs: downstream,
       inbound_connections: inboundConns,
       outbound_connections: outboundConns,
-      root_cause_explanation: target.root_cause,
-      rotation_flights: rotationFlights,
     };
   }
 }

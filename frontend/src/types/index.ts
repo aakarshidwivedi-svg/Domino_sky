@@ -1,8 +1,8 @@
-export type FlightStatus = 'ON_TIME' | 'DELAYED' | 'SEVERELY_DELAYED' | 'RECOVERED' | 'CANCELLED';
-export type FlightPhase = 'SCHEDULED' | 'BOARDING' | 'AIRBORNE' | 'HOLDING' | 'ARRIVED' | 'CANCELLED';
+export type FlightStatus = 'ON_TIME' | 'DELAYED' | 'SEVERELY_DELAYED' | 'RECOVERED' | 'CANCELLED' | 'DIVERTED';
+export type FlightPhase = 'SCHEDULED' | 'BOARDING' | 'AIRBORNE' | 'HOLDING' | 'ARRIVED' | 'CANCELLED' | 'DIVERTED';
 export type RiskTier = 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
-export type CrewStatus = 'LEGAL' | 'WARNING' | 'EXCEEDED';
-export type ConnectionStatus = 'ON_TIME' | 'PROTECTED' | 'BROKEN' | 'CANCELLED';
+export type CrewStatus = 'LEGAL' | 'WARNING' | 'EXCEEDED' | 'SWAPPED_STANDBY';
+export type ConnectionStatus = 'ON_TIME' | 'PROTECTED' | 'BROKEN' | 'CANCELLED' | 'REBOOKED' | 'STRANDED_OVERNIGHT';
 
 export interface Airport {
   id: string;
@@ -43,6 +43,9 @@ export interface Flight {
   is_holding: boolean;
   holding_minutes: number;
   is_cancelled?: boolean;
+  is_diverted?: boolean;
+  diversion_airport?: string | null;
+  crosses_midnight?: boolean;
   root_cause: string;
   delay_reasons: string[];
   prev_flight_id: string | null;
@@ -50,6 +53,24 @@ export interface Flight {
   is_spare_recovered: boolean;
   assigned_spare_tail: string | null;
   reposition_mins: number;
+  causal_chain?: {
+    initiating_event: string;
+    initiating_station: string;
+    primary_delay: number;
+    inherited_delay: number;
+    absorbed_buffer: number;
+    holding_or_slot_delay: number;
+    breadcrumbs: string[];
+  };
+}
+
+export interface PassengerRebooking {
+  rebooked_flight_id: string | null;
+  rebooked_dep: string | null;
+  rebooked_arr: string | null;
+  passenger_delay_minutes: number;
+  seat_margin: number;
+  is_same_day: boolean;
 }
 
 export interface Connection {
@@ -64,6 +85,8 @@ export interface Connection {
   margin_minutes: number;
   is_broken: boolean;
   status: ConnectionStatus;
+  rebooking_status?: 'REBOOKED' | 'STRANDED_OVERNIGHT' | null;
+  rebooking?: PassengerRebooking | null;
   details: string;
 }
 
@@ -81,6 +104,9 @@ export interface CrewAssignment {
   status: CrewStatus;
   is_exceeded: boolean;
   is_warning: boolean;
+  crew_swapped?: boolean;
+  standby_crew_id?: string | null;
+  duty_rest_status?: string;
   flight_ids: string[];
 }
 
@@ -115,13 +141,58 @@ export interface OperationalKPIs {
   severely_delayed_flights: number;
   recovered_flights: number;
   cancelled_flights?: number;
+  diverted_flights?: number;
   total_delay_minutes: number;
   broken_connections: number;
   passengers_at_risk: number;
+  rebooked_passengers?: number;
   protected_connections: number;
   crew_violations: number;
   crew_warnings: number;
+  crew_swaps?: number;
   available_spares: number;
+  on_time_pct?: number;
+}
+
+export interface RecoveryPlan {
+  plan_id: string;
+  name: string;
+  strategy_tag: string;
+  description: string;
+  deployments: SpareDeployment[];
+  cancelled_flights: string[];
+  total_delay_minutes: number;
+  delayed_flights: number;
+  cancelled_count: number;
+  broken_connections: number;
+  stranded_passengers: number;
+  rebooked_passengers: number;
+  crew_violations: number;
+  estimated_cost: number;
+  score: number;
+  is_feasible: boolean;
+  feasibility_notes: string[];
+  tradeoffs: {
+    pros: string;
+    cons: string;
+  };
+}
+
+export interface ConflictWarning {
+  conflict_type: string;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM';
+  message: string;
+  conflicting_actions: string[];
+}
+
+export interface SimulationFact {
+  metric: string;
+  field_name: string;
+  value: any;
+  unit: string;
+  provenance: string;
+  confidence: number;
+  verified: boolean;
 }
 
 export interface ScenarioComparison {
