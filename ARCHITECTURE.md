@@ -92,7 +92,9 @@ DOMINO SKY provides 9 integrated operational views accessible via the sidebar:
    - Analysis workbench for all 21 connection banks.
    - MCT margin gauges, broken connection alarms, stranded passenger metrics, and hub filter buttons.
 5. **Recovery Desk (`RecoveryDeskView.tsx`):**
-   - Dual-strategy recovery configuration: Standby Spare Aircraft Takeover or Tactical Flight Cancellation.
+   - Multi-objective Pareto optimizer evaluating 4 candidate plans (Spares Priority, Minimum Cost, Pareto-Balanced OCC, Cascade Isolation).
+   - Real-time recovery action conflict detector (flags double booking, contradictory actions, infeasible ferry repositions).
+   - Dual-strategy manual configurator: Standby Spare Aircraft Takeover or Tactical Flight Cancellation.
    - Repositioning flight assumption configurator and 3-way scenario comparison matrix.
 6. **Network Risk Intelligence (`NetworkIntelligenceView.tsx`):**
    - Deterministic 0–100 risk scoring index per airport and aircraft rotation.

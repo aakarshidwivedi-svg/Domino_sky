@@ -30,7 +30,11 @@ export const RadarView: React.FC = () => {
   const [closureDurationMins, setClosureDurationMins] = useState(90);
 
   const airborneFlights = Object.values(simState.flights).filter(
-    (f) => f.current_phase === 'AIRBORNE' || f.current_phase === 'HOLDING'
+    (f) =>
+      f.current_phase === 'AIRBORNE' ||
+      f.current_phase === 'HOLDING' ||
+      f.current_phase === 'DIVERTED' ||
+      f.status === 'DIVERTED'
   );
 
   const handleQuickClose = () => {
@@ -193,14 +197,22 @@ export const RadarView: React.FC = () => {
                     <div className="text-right">
                       <span
                         className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
-                          f.is_holding
+                          f.status === 'DIVERTED'
+                            ? 'bg-purple-950 text-purple-300 border border-purple-500/50'
+                            : f.is_holding
                             ? 'bg-red-950 text-occ-red border border-occ-red/40 animate-pulse'
                             : f.delay_minutes > 15
                             ? 'bg-amber-950 text-occ-amber'
                             : 'bg-cyan-950 text-occ-cyan'
                         }`}
                       >
-                        {f.is_holding ? 'HOLDING' : f.delay_minutes > 0 ? `+${f.delay_minutes}m` : 'ON TIME'}
+                        {f.status === 'DIVERTED'
+                          ? `DIVERTED`
+                          : f.is_holding
+                          ? 'HOLDING'
+                          : f.delay_minutes > 0
+                          ? `+${f.delay_minutes}m`
+                          : 'ON TIME'}
                       </span>
                     </div>
                   </div>

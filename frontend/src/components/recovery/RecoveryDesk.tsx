@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useOperational } from '../../context/OperationalContext';
 import { SpareAircraftCard } from './SpareAircraftCard';
-import { SpareDeployment, Flight } from '../../types';
+import { SpareDeployment, Flight, RecoveryPlan, ConflictWarning } from '../../types';
 import {
   Wrench,
   RotateCcw,
@@ -16,18 +16,25 @@ import {
   XCircle,
   BarChart3,
   Check,
+  Sparkles,
+  Zap,
+  AlertOctagon,
+  Users,
 } from 'lucide-react';
-import { timeToMinutes, minutesToTime } from '../../services/deterministicSim';
+import { timeToMinutes, minutesToTime, localSimulator } from '../../services/deterministicSim';
 
 export const RecoveryDesk: React.FC = () => {
   const {
     simState,
+    simMinute,
+    closures,
     deployments,
     deploySpare,
     undoDeployment,
     cancelledFlights,
     cancelFlight,
     uncancelFlight,
+    applyRecoveryPlan,
     resetScenario,
     scenarioComparison,
     selectFlight,
@@ -46,6 +53,16 @@ export const RecoveryDesk: React.FC = () => {
       .filter((f) => f.delay_minutes > 10 && !f.is_spare_recovered && !f.is_cancelled)
       .sort((a, b) => b.delay_minutes - a.delay_minutes);
   }, [simState.flights]);
+
+  // Active conflicts between deployed recovery actions
+  const activeConflicts = useMemo(() => {
+    return localSimulator.detectRecoveryConflicts(deployments, cancelledFlights);
+  }, [deployments, cancelledFlights]);
+
+  // Multi-objective optimized recovery plans
+  const candidatePlans = useMemo(() => {
+    return localSimulator.optimizeRecoveryPlans(closures, {}, simMinute);
+  }, [closures, simMinute]);
 
   // Default target flight
   const effectiveTargetId = targetFlightId || (delayedFlights[0]?.flight_id ?? 'DS1502');
@@ -174,6 +191,38 @@ export const RecoveryDesk: React.FC = () => {
         </div>
       </div>
 
+      {/* Active Recovery Conflicts Alert (if contradictory/infeasible actions exist) */}
+      {activeConflicts.length > 0 && (
+        <div className="bg-red-950/40 border-2 border-red-500/70 rounded-xl p-4 space-y-3 shadow-lg shadow-red-950/40">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-red-300 font-mono font-bold text-sm tracking-wider uppercase">
+              <AlertOctagon className="w-5 h-5 text-red-400" />
+              <span>Recovery Action Conflicts Detected ({activeConflicts.length})</span>
+            </div>
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-900/60 text-red-200 border border-red-500">
+              OCC INFEASIBILITY
+            </span>
+          </div>
+          <div className="space-y-2">
+            {activeConflicts.map((conf, idx) => (
+              <div key={idx} className="bg-slate-950/80 border border-red-800/60 rounded-lg p-3 text-xs space-y-1">
+                <div className="flex items-center justify-between font-mono">
+                  <span className="font-bold text-red-400">[{conf.severity}] {conf.conflict_type.replace(/_/g, ' ')}</span>
+                </div>
+                <p className="text-slate-300">{conf.message}</p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {conf.conflicting_actions.map((act, i) => (
+                    <span key={i} className="px-2 py-0.5 rounded bg-red-950 border border-red-700 text-red-300 font-mono text-[10px]">
+                      {act}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Standby Fleet Status */}
       <div className="space-y-3">
         <div className="text-xs font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between">
@@ -190,6 +239,147 @@ export const RecoveryDesk: React.FC = () => {
               onSelect={() => setSelectedSpareTail(spare.tail_id)}
             />
           ))}
+        </div>
+      </div>
+
+      {/* Multi-Objective Recovery Optimizer (Pareto Policy Exploration) */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 space-y-4 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
+          <div>
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-cyan-400" />
+              <h2 className="text-sm font-mono font-bold text-slate-100 uppercase tracking-wider">
+                Multi-Objective Recovery Optimizer (Pareto Policy Exploration)
+              </h2>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-800">
+                4 Evaluated Plans
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Automated multi-objective optimization evaluating passenger disruption, total delay, cancellations, crew rest limits, and direct operating cost.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {candidatePlans.map((plan) => {
+            const isApplied =
+              deployments.length === plan.deployments.length &&
+              cancelledFlights.length === plan.cancelled_flights.length &&
+              plan.deployments.every((d) =>
+                deployments.some((x) => x.spare_tail === d.spare_tail && x.target_flight_id === d.target_flight_id)
+              );
+
+            return (
+              <div
+                key={plan.plan_id}
+                className={`p-4 rounded-xl border transition-all flex flex-col justify-between space-y-4 ${
+                  plan.plan_id === 'PLAN_C'
+                    ? 'bg-slate-950/90 border-cyan-500/70 shadow-lg shadow-cyan-950/30 ring-1 ring-cyan-500/30'
+                    : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div className="space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-xs text-cyan-400">
+                          {plan.plan_id}
+                        </span>
+                        <span className="font-mono font-bold text-xs text-slate-100">
+                          {plan.name}
+                        </span>
+                      </div>
+                      <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-900 border border-slate-700 text-slate-300">
+                        {plan.strategy_tag}
+                      </span>
+                    </div>
+
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-base font-mono font-black text-cyan-300">
+                        {plan.score}
+                        <span className="text-slate-500 text-xs font-normal">/100</span>
+                      </div>
+                      <div className="text-[10px] font-mono text-slate-400">
+                        EST. ${plan.estimated_cost.toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    {plan.description}
+                  </p>
+
+                  {/* Impact Matrix Grid */}
+                  <div className="grid grid-cols-3 gap-2 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/80 text-[11px] font-mono">
+                    <div>
+                      <span className="text-slate-500 block text-[9px] uppercase">Delay Time</span>
+                      <span className="text-amber-400 font-bold">{plan.total_delay_minutes}m</span>
+                      <span className="text-slate-500 text-[10px] block">({plan.delayed_flights} flts)</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[9px] uppercase">Cancellations</span>
+                      <span className={plan.cancelled_count > 0 ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold'}>
+                        {plan.cancelled_count} flts
+                      </span>
+                      <span className="text-slate-500 text-[10px] block">({plan.stranded_passengers} pax)</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[9px] uppercase">Connections</span>
+                      <span className={plan.broken_connections > 0 ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                        {plan.broken_connections} broken
+                      </span>
+                      <span className="text-slate-500 text-[10px] block">
+                        ({plan.rebooked_passengers} rebooked)
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Trade-offs */}
+                  <div className="text-[11px] space-y-1 pt-1">
+                    <div className="text-emerald-400/90 flex items-start gap-1">
+                      <span className="font-bold font-mono text-[10px] uppercase text-emerald-500">PRO:</span>
+                      <span>{plan.tradeoffs.pros}</span>
+                    </div>
+                    <div className="text-slate-400 flex items-start gap-1">
+                      <span className="font-bold font-mono text-[10px] uppercase text-amber-500">CON:</span>
+                      <span>{plan.tradeoffs.cons}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                  <div className="text-[10px] font-mono text-slate-500">
+                    {plan.deployments.length} Spares • {plan.cancelled_flights.length} Cancels
+                  </div>
+
+                  <button
+                    onClick={() => applyRecoveryPlan(plan)}
+                    disabled={isApplied}
+                    className={`px-3 py-1.5 rounded-lg font-mono font-bold text-xs transition-all flex items-center gap-1.5 ${
+                      isApplied
+                        ? 'bg-slate-800 text-slate-400 border border-slate-700 cursor-default'
+                        : plan.plan_id === 'PLAN_C'
+                        ? 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-md shadow-cyan-950/40'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                    }`}
+                  >
+                    {isApplied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Plan Applied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3.5 h-3.5" />
+                        <span>Apply Plan</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

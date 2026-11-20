@@ -234,7 +234,8 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
 
       const isSelected = selectedFlightId === flight.flight_id;
       const isAirportConnected = selectedAirportId === flight.origin || selectedAirportId === flight.destination;
-      const isDisrupted = flight.status === 'DELAYED' || flight.status === 'SEVERELY_DELAYED';
+      const isDiverted = flight.status === 'DIVERTED' || flight.current_phase === 'DIVERTED';
+      const isDisrupted = flight.status === 'DELAYED' || flight.status === 'SEVERELY_DELAYED' || isDiverted;
 
       // Generate curved route points
       const points: [number, number][] = [];
@@ -248,9 +249,13 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
       let routeOpacity = 0.52;
 
       if (isSelected) {
-        routeColor = '#00f0ff';
+        routeColor = isDiverted ? '#d8b4fe' : '#00f0ff';
         routeWeight = 3;
         routeOpacity = 0.95;
+      } else if (isDiverted) {
+        routeColor = '#c084fc';
+        routeWeight = 2.2;
+        routeOpacity = 0.85;
       } else if (isAirportConnected) {
         routeColor = isDisrupted ? '#f59e0b' : '#38bdf8';
         routeWeight = 2;
@@ -274,7 +279,7 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
         opacity: routeOpacity,
         lineCap: 'round',
         lineJoin: 'round',
-        dashArray: isSelected ? undefined : flight.status === 'SEVERELY_DELAYED' ? '4, 4' : undefined,
+        dashArray: isSelected ? undefined : isDiverted ? '6, 6' : flight.status === 'SEVERELY_DELAYED' ? '4, 4' : undefined,
       });
 
       polyline.on('click', () => {
@@ -292,7 +297,11 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
     aircraftGroup.clearLayers();
 
     const activeFlights = Object.values(simState.flights).filter(
-      (f) => f.current_phase === 'AIRBORNE' || f.current_phase === 'HOLDING'
+      (f) =>
+        f.current_phase === 'AIRBORNE' ||
+        f.current_phase === 'HOLDING' ||
+        f.current_phase === 'DIVERTED' ||
+        f.status === 'DIVERTED'
     );
 
     activeFlights.forEach((flight) => {
@@ -318,7 +327,10 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
       // Determine aircraft color by status
       let planeColor = '#00f0ff'; // Cyan on-time
       let pulseClass = '';
-      if (flight.status === 'SEVERELY_DELAYED' || flight.is_holding) {
+      if (flight.status === 'DIVERTED' || flight.current_phase === 'DIVERTED') {
+        planeColor = '#c084fc'; // Purple diverted
+        pulseClass = 'animate-pulse';
+      } else if (flight.status === 'SEVERELY_DELAYED' || flight.is_holding) {
         planeColor = '#ef4444'; // Red severe
         pulseClass = 'animate-pulse';
       } else if (flight.status === 'DELAYED') {
@@ -366,9 +378,15 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
             </svg>
           </div>
           ${
-            isSelected || flight.is_holding || flight.status === 'SEVERELY_DELAYED'
+            isSelected || flight.is_holding || flight.status === 'SEVERELY_DELAYED' || flight.status === 'DIVERTED'
               ? `<div class="absolute -bottom-4 px-1.5 py-0.2 rounded bg-navy-950/90 border border-slate-800 text-[9px] font-mono font-bold text-white whitespace-nowrap shadow pointer-events-none">
-                  ${flight.flight_id} ${flight.delay_minutes > 0 ? `<span class="text-occ-amber">+${flight.delay_minutes}m</span>` : ''}
+                  ${flight.flight_id} ${
+                    flight.status === 'DIVERTED'
+                      ? `<span class="text-purple-300">DIV &rarr; ${flight.destination}</span>`
+                      : flight.delay_minutes > 0
+                      ? `<span class="text-occ-amber">+${flight.delay_minutes}m</span>`
+                      : ''
+                  }
                 </div>`
               : ''
           }
@@ -556,6 +574,10 @@ export const FlightRadar: React.FC<FlightRadarProps> = ({ isFullView = false }) 
         <div className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-occ-red"></span>
           <span className="text-slate-300">Severe / Holding</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-purple-400"></span>
+          <span className="text-slate-300">Diverted (Alternate)</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-occ-green"></span>

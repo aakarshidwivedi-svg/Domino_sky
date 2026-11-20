@@ -78,23 +78,22 @@ All features share **one connected application with one shared operational state
 
 ---
 
-### Step 6: Recovery Desk — Spares & Tactical Cancellations
+### Step 6: Recovery Desk — Multi-Objective Optimizer, Spares & Cancellations
 1. Click **Recovery Desk** in the left sidebar.
-2. **Inspect Standby Spares:**
+2. **Inspect Multi-Objective Recovery Plans:**
+   - Review 4 candidate plans evaluated by the optimizer:
+     - **Plan A (Spares Priority):** Max reliability, zero cancellations, scores 80+/100.
+     - **Plan B (Min Operating Cost):** 0m ferry flights, lowest financial expenditure.
+     - **Plan C (Pareto-Balanced OCC - Recommended):** Combines 1 spare deployment with 1 low-load cancellation to sever the cascade.
+     - **Plan D (Cascade Isolation):** Cancels initiating delayed legs to reset OTP.
+   - Click **"Apply Plan"** on Plan C to load optimal deployments and cancellations instantly!
+3. **Inspect Real-Time Recovery Conflict Detector:**
+   - Attempt conflicting actions (e.g., target a cancelled flight with a spare aircraft).
+   - Notice the **OCC Infeasibility Alert** banner immediately warning of contradictory actions.
+4. **Inspect Standby Spares & Manual Configurator:**
    - **VT-DS17** (BLR Base, 05:00 ready, 180 seats).
    - **VT-DS18** (DEL Base, 05:00 ready, 180 seats).
-3. **Test Feasibility Rules:**
-   - Select flight `DS1503` (departs DEL at 12:20).
-   - Choose `VT-DS18`. Notice: Base match at DEL &rarr; **Immediate Zero-Delay Deployment Confirmed**.
-   - Now select flight `DS0401` (departs BOM). Notice: Base mismatch &rarr; System flags **Repositioning Flight Assumption Required**.
-4. **Test Tactical Flight Cancellation:**
-   - In the Recovery Strategy Configurator, switch strategy to **"Tactical Flight Cancellation"**.
-   - Select delayed initiating flight **DS1502**.
-   - Click **"Cancel Flight & Halt Cascade"**.
-   - **Observe Result:**
-     - `DS1502` is marked CANCELLED.
-     - Downstream domino delay on `DS1503` and `DS1504` is severed.
-     - Network delay minutes drop from **480m down to 270m** (a 210-minute saving!).
+   - Test base match vs ferry repositioning assumptions with interactive slider.
 5. **Inspect 3-Way Scenario Comparison Matrix:**
    - Look at the bottom comparison table showing **Baseline Schedule**, **Disrupted (Mumbai 90m)**, and **Recovered (Active Interventions)** side by side with quantified savings!
 

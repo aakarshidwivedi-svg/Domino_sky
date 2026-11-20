@@ -9,7 +9,7 @@ Conversion back to 24-hour aviation display format:
 $$\text{HH} = \lfloor ((t \bmod 1440) + 1440) \bmod 1440 / 60 \rfloor$$
 $$\text{MM} = ((t \bmod 1440) + 1440) \bmod 1440 \pmod{60}$$
 
-Flights departing before midnight and landing after midnight are evaluated monotonically to ensure correct turnaround calculations.
+Flights departing before midnight and landing after midnight are evaluated monotonically to ensure correct turnaround calculations, appending `(+1d)` when displaying next-day operations.
 
 ---
 
@@ -34,7 +34,7 @@ For leg $k > 1$ assigned to aircraft tail $T$:
 
 ---
 
-## 3. Airport Disruption & Airborne Holding Policy
+## 3. Airport Disruption, Gate Holds & Post-Closure Separation
 
 When an airport $A$ experiences an active closure interval $[t_{\text{start}}, t_{\text{end}})$:
 
@@ -43,17 +43,32 @@ Any flight scheduled or predicted to depart from $A$ during $[t_{\text{start}}, 
 $$t_{\text{pred\_dep}} = \max(t_{\text{earliest\_dep}}, t_{\text{end}})$$
 $$\text{DepDelay} = t_{\text{pred\_dep}} - t_{\text{sched\_dep}}$$
 
-### B. Arrival Airborne Holding Queue
-Any flight inbound to $A$ scheduled or predicted to land during $[t_{\text{start}}, t_{\text{end}})$ enters an airborne holding pattern:
-1. Arriving flights enter a First-Come, First-Served holding queue over airport $A$.
-2. Upon airport reopening at $t_{\text{end}}$, arriving aircraft are cleared for landing separated by a 3-minute runway spacing buffer:
-   $$t_{\text{pred\_arr}} = t_{\text{end}} + (\text{QueueSlot} - 1) \times 3$$
-3. Airborne holding minutes accumulated:
-   $$t_{\text{holding}} = \max(0, t_{\text{pred\_arr}} - (t_{\text{pred\_dep}} + \text{block\_minutes}))$$
+### B. Runway Movement Capacity & Queue Slot Separation
+Upon airport reopening at $t_{\text{end}}$, departures and arrivals are sequenced with slot separation (minimum 2–3 minutes between consecutive movements) to prevent runway congestion overflows exceeding nominal airport movement capacity:
+$$t_{\text{dep\_slot}} \ge t_{\text{last\_dep}} + 2\text{ mins}$$
+$$t_{\text{arr\_slot}} \ge t_{\text{last\_arr}} + 2\text{ mins}$$
 
 ---
 
-## 4. Passenger Connection Invariant & Margin Evaluation
+## 4. Airborne Holding & Designated Alternate Diversions
+
+Domestic A320 commercial aircraft adhere to a maximum domestic holding fuel reserve buffer of **45 minutes**:
+$$\text{FuelReserve}_{\max} = 45\text{ minutes}$$
+
+When an airport $A$ closes while an inbound flight $F$ is already airborne:
+1. If the required holding time until reopening is within fuel reserve ($t_{\text{hold}} \le 45\text{m}$):
+   - The aircraft enters an airborne holding pattern above airport $A$.
+   - Lands after reopening sequenced into the arrival queue.
+2. If required holding time exceeds fuel reserve ($t_{\text{hold}} > 45\text{m}$):
+   - Flight triggers an **AIRBORNE DIVERSION** to its designated regional alternate airport:
+     - `BOM` &rarr; Alternate: `PNQ` (Pune), `GOI` (Goa), or `AMD` (Ahmedabad)
+     - `DEL` &rarr; Alternate: `JAI` (Jaipur), `IXC` (Chandigarh), or `LKO` (Lucknow)
+     - `BLR` &rarr; Alternate: `MAA` (Chennai), `COK` (Kochi), or `HYD` (Hyderabad)
+   - Status updates to `DIVERTED`, destination is re-routed to the alternate airport, and downstream rotations are flagged for OCC re-assignment.
+
+---
+
+## 5. Passenger Connection Invariant & Automated Rebooking
 
 The airline network includes 21 monitored passenger connection banks ($CX01 - CX21$).
 For each connection bank $C$ from inbound flight $F_{\text{in}}$ to outbound flight $F_{\text{out}}$ at hub $A$:
@@ -68,29 +83,27 @@ For each connection bank $C$ from inbound flight $F_{\text{in}}$ to outbound fli
    \textbf{PROTECTED}, & \text{if } \text{Margin} \ge 0 \text{ and } (\text{Delay}(F_{\text{in}}) > 0 \lor \text{Delay}(F_{\text{out}}) > 0) \\
    \textbf{ON\_TIME}, & \text{otherwise}
    \end{cases}$$
-4. **Stranded Passengers:**
-   When a connection is broken, $C.\text{passengers}$ are marked as stranded/at-risk. Connections are strictly partitioned by ID to prevent double-counting.
+4. **Automated Rebooking Search:**
+   When a connection breaks, the engine scans the same-day network for onward flights departing after $t_{\text{pred\_arr}}(F_{\text{in}}) + \text{MCT}$ to the final destination with available seat margin ($\text{pax} + C.\text{passengers} \le 180$).
+   - If found: Marked `REBOOKED` onto alternate flight.
+   - If none available: Marked `STRANDED_OVERNIGHT` requiring hotel accommodation.
 
 ---
 
-## 5. Crew Duty Limit Exposure
+## 6. Crew Duty Limits & Standby Relief Swaps
 
 The network features 16 crew rosters assigned to specific flight sequences:
 - Duty starts at `duty_start` (typically 45–60 minutes prior to first flight departure).
 - Maximum statutory duty limit:
   $$\text{Duty}_{\max} = 600\text{ minutes (10 hours)}$$
-- Let $F_{\text{final}}$ be the last uncancelled flight operated by the crew in the schedule.
+- Let $F_{\text{final}}$ be the last uncancelled flight operated by the crew in the schedule:
   $$\text{Duty}_{\text{elapsed}} = t_{\text{pred\_arr}}(F_{\text{final}}) - t_{\text{duty\_start}}$$
-- **Crew Duty Classification:**
-  $$\text{Status} = \begin{cases}
-  \textbf{EXCEEDED}, & \text{if } \text{Duty}_{\text{elapsed}} > 600 \\
-  \textbf{WARNING}, & \text{if } 555 \le \text{Duty}_{\text{elapsed}} \le 600 \\
-  \textbf{LEGAL}, & \text{if } \text{Duty}_{\text{elapsed}} < 555
-  \end{cases}$$
+- **Standby Crew Replacement Policy:**
+  When $\text{Duty}_{\text{elapsed}} > 600$ minutes, a standby crew relief swap (`STBY-CRxx`) is automatically assigned at the designated crew base hub (`DEL`, `BOM`, `BLR`, `HYD`, `CCU`, `MAA`, etc.), resetting the duty accumulation for remaining downline legs.
 
 ---
 
-## 6. Deterministic Operational Risk Scoring
+## 7. Deterministic Operational Risk Scoring
 
 ### Airport Operational Risk Index ($0 - 100$)
 $$\text{Risk}_{\text{airport}} = \min(100, S_{\text{closure}} + S_{\text{delay}} + S_{\text{turnaround}} + S_{\text{connection}})$$
@@ -107,33 +120,39 @@ $$\text{Risk}_{\text{rotation}} = \min(100, \text{DelayScore} + \text{CascadeSco
 
 ---
 
-## 7. Recovery Interventions: Spares & Tactical Cancellations
+## 8. Multi-Objective Recovery Optimizer
 
-### A. Standby Spare Aircraft Deployment
-DOMINO SKY controls 2 standby aircraft:
-- **VT-DS17:** Based at Bengaluru (**BLR**), available from 05:00 IST, 180 seats.
-- **VT-DS18:** Based at Delhi (**DEL**), available from 05:00 IST, 180 seats.
+The optimizer generates and compares **4 Pareto-distinct candidate recovery plans**:
 
-**Feasibility Validation Rules:**
-1. **Seat Capacity:** $\text{Seats}_S (180) \ge F.\text{pax}$. Verified for all flights in dataset ($\max \text{pax} = 173$).
-2. **Availability:** Spare must not already be deployed to another active rotation.
-3. **Positioning Policy:**
-   - **Base Match ($0$m Ferry):** If $S.\text{base} = F.\text{origin}$, immediate deployment is validated with 0m ferry.
-   - **Location Mismatch (Ferry Assumption Required):** If $S.\text{base} \ne F.\text{origin}$, system requires an explicit ferry repositioning time assumption $t_{\text{ferry}}$ (e.g. 60–90m).
-4. **Achievable Departure & Delay Savings:**
-   $$t_{\text{spare\_ready}} = t_{\text{avail}}(S) + t_{\text{ferry}}$$
-   $$t_{\text{achievable\_dep}} = \max(t_{\text{sched\_dep}}(F), t_{\text{spare\_ready}})$$
-   $$\text{Delay}_{\text{saved}} = \max(0, \text{Delay}_{\text{disrupted}}(F) - (t_{\text{achievable\_dep}} - t_{\text{sched\_dep}}(F)))$$
+### Recovery Cost Objective Function
+$$\text{Cost} = (\text{TotalDelayMins} \times \$75) + (\text{Cancellations} \times \$12,000) + (\text{PaxAtRisk} \times \$250) + (\text{SparesDeployed} \times \$4,000) + (\text{FerryMins} \times \$50) + (\text{CrewViolations} \times \$5,000)$$
 
-### B. Tactical Flight Cancellation
-When a primary flight is delayed beyond an acceptable threshold (e.g., $DS1502$ held during BOM storm):
-1. Marking $F$ as cancelled immediately halts its operation ($F.\text{status} = \text{CANCELLED}, F.\text{delay} = 0$).
-2. Subsequent legs on the same rotation start with $\text{prevSimArrMin} = \text{null}$, decoupling them from inherited delays and allowing downstream flights ($DS1503, DS1504$) to depart on time.
-3. Any passenger connections feeding or departing from $F$ are explicitly marked as CANCELLED to prevent false protection metrics.
+### Composite Plan Score ($0 - 100$)
+$$\text{Score} = \left(\frac{\Delta_{\text{delay}}}{\max(1, \text{TotalDisruptedDelay})} \times 40\right) + (\Delta_{\text{conns}} \times 15) + (\text{OTP}_{\%} \times 0.35) - (\text{Cancels} \times 10)$$
 
-### C. 3-Way Comparative Scenario Delta
-The engine calculates exact deltas across three parallel states:
-$$\Delta_{\text{delay\_saved}} = \max(0, \text{TotalDelay}_{\text{disrupted}} - \text{TotalDelay}_{\text{recovered}})$$
-$$\Delta_{\text{conns\_saved}} = \max(0, \text{BrokenConns}_{\text{disrupted}} - \text{BrokenConns}_{\text{recovered}})$$
-$$\Delta_{\text{pax\_saved}} = \max(0, \text{PaxRisk}_{\text{disrupted}} - \text{PaxRisk}_{\text{recovered}})$$
-$$\Delta_{\text{crew\_avoided}} = \max(0, \text{CrewViolations}_{\text{disrupted}} - \text{CrewViolations}_{\text{recovered}})$$
+### 4 Candidate Strategies
+1. **Plan A — Maximum Schedule Reliability (Spares Priority):**
+   Deploys both standby spares (`VT-DS17`, `VT-DS18`) to high-leverage delayed rotations. 0 cancellations.
+2. **Plan B — Minimum Direct Operating Cost:**
+   Restricts spare deployments to home-base matches only (0m ferry repositioning). Retains spare reserves.
+3. **Plan C — Balanced OCC Pareto Policy (Recommended):**
+   Combines 1 standby spare deployment on the primary trunk route with 1 tactical cancellation on an isolated low-load leg to sever the downline cascade.
+4. **Plan D — Aggressive Cascade Severance (Schedule Reset):**
+   Immediately cancels the initiating delayed flights, resetting the network to nominal OTP.
+
+---
+
+## 9. Real-Time Recovery Conflict Detector
+
+The recovery engine detects operational conflicts before interventions are executed:
+1. **Double Booking (`SPARE_DOUBLE_BOOKING`):** Same spare assigned to multiple concurrent flight rotations.
+2. **Contradictory Actions (`CONTRADICTORY_ACTIONS`):** Flight marked both CANCELLED and targeted for spare replacement.
+3. **Infeasible Ferry Repositioning (`INFEASIBLE_FERRY`):** Spare deployed at a foreign origin without explicit repositioning flight buffer.
+
+---
+
+## 10. Structured Simulation Facts & AI Provenance
+
+To guarantee zero hallucination in AI Copilot responses, the engine emits 17 typed `SimulationFact` records:
+- Each fact contains `metric`, `field_name`, `value`, `unit`, and `provenance` (e.g. `sim_engine.py:kpis.total_delay_minutes`).
+- Every claim made in natural-language responses is cross-validated against its corresponding simulation fact.

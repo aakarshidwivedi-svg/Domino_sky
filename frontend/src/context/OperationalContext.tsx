@@ -9,6 +9,7 @@ import {
   Airport,
   CopilotMessage,
   CopilotAction,
+  RecoveryPlan,
 } from '../types';
 import { localSimulator, timeToMinutes, minutesToTime } from '../services/deterministicSim';
 import { apiService } from '../services/api';
@@ -74,6 +75,7 @@ interface OperationalContextType {
   cancelledFlights: string[];
   cancelFlight: (flightId: string) => void;
   uncancelFlight: (flightId: string) => void;
+  applyRecoveryPlan: (plan: RecoveryPlan) => void;
   resetScenario: () => void;
 
   // Scenario 3-Way Comparison
@@ -298,6 +300,12 @@ export const OperationalProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setLastActionMessage(`Flight ${flightId} restored to active schedule.`);
   }, []);
 
+  const applyRecoveryPlan = useCallback((plan: RecoveryPlan) => {
+    setDeployments(plan.deployments || []);
+    setCancelledFlights(plan.cancelled_flights || []);
+    setLastActionMessage(`Applied ${plan.name} (${plan.strategy_tag}).`);
+  }, []);
+
   const resetScenario = useCallback(() => {
     setClosures([]);
     setManualDelays({});
@@ -434,6 +442,7 @@ export const OperationalProvider: React.FC<{ children: React.ReactNode }> = ({ c
         cancelledFlights,
         cancelFlight,
         uncancelFlight,
+        applyRecoveryPlan,
         resetScenario,
         scenarioComparison,
         copilotMessages,
