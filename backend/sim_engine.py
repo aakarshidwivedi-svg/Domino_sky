@@ -17,7 +17,7 @@ Exceeds competitive benchmarks with:
 import json
 import re
 from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 
 def time_to_minutes(t_str: str) -> int:
     """Converts 'HH:MM' string to continuous minutes from midnight."""

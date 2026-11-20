@@ -188,7 +188,7 @@ export interface ConflictWarning {
 export interface SimulationFact {
   metric: string;
   field_name: string;
-  value: any;
+  value: string | number | boolean | Record<string, unknown> | null;
   unit: string;
   provenance: string;
   confidence: number;

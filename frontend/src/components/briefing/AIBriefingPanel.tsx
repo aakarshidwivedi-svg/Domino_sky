@@ -1,5 +1,6 @@
 import React from 'react';
 import { useOperational } from '../../context/OperationalContext';
+import { AIBriefingRecommendation } from '../../types';
 import {
   Bot,
   AlertTriangle,
@@ -30,7 +31,7 @@ export const AIBriefingPanel: React.FC<AIBriefingPanelProps> = ({ isFullView = f
   const briefing = simState.ai_briefing;
   if (!briefing) return null;
 
-  const handleActionClick = (rec: any) => {
+  const handleActionClick = (rec: AIBriefingRecommendation) => {
     if (rec.action_type === 'DEPLOY_SPARE') {
       if (rec.target_flight_id) selectFlight(rec.target_flight_id);
       setWorkspace('recovery');

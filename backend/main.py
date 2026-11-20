@@ -7,20 +7,19 @@ conflict detection, and simulation facts provenance.
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any, List
 
 try:
-    from backend.sim_engine import DominoSkyEngine, AirportClosure, SpareDeployment, time_to_minutes, minutes_to_time
+    from backend.sim_engine import DominoSkyEngine, AirportClosure, SpareDeployment, time_to_minutes
     from backend.models import (
-        SimulationRequest, SpareFeasibilityRequest, AirportClosureModel,
-        SpareDeploymentModel, CopilotRequest, ComparisonRequest,
+        SimulationRequest, SpareFeasibilityRequest,
+        CopilotRequest, ComparisonRequest,
         ConflictCheckRequest, RecoveryOptimizationRequest
     )
 except ImportError:
-    from sim_engine import DominoSkyEngine, AirportClosure, SpareDeployment, time_to_minutes, minutes_to_time
+    from sim_engine import DominoSkyEngine, AirportClosure, SpareDeployment, time_to_minutes
     from models import (
-        SimulationRequest, SpareFeasibilityRequest, AirportClosureModel,
-        SpareDeploymentModel, CopilotRequest, ComparisonRequest,
+        SimulationRequest, SpareFeasibilityRequest,
+        CopilotRequest, ComparisonRequest,
         ConflictCheckRequest, RecoveryOptimizationRequest
     )
 
