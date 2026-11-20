@@ -1,5 +1,7 @@
 """
 FastAPI Server for DOMINO SKY - Airline Operations Control Centre
+Advanced endpoints: simulation, copilot, scenario comparison, multi-objective optimization,
+conflict detection, and simulation facts provenance.
 """
 
 import os
@@ -11,19 +13,21 @@ try:
     from backend.sim_engine import DominoSkyEngine, AirportClosure, SpareDeployment, time_to_minutes, minutes_to_time
     from backend.models import (
         SimulationRequest, SpareFeasibilityRequest, AirportClosureModel,
-        SpareDeploymentModel, CopilotRequest, ComparisonRequest
+        SpareDeploymentModel, CopilotRequest, ComparisonRequest,
+        ConflictCheckRequest, RecoveryOptimizationRequest
     )
 except ImportError:
     from sim_engine import DominoSkyEngine, AirportClosure, SpareDeployment, time_to_minutes, minutes_to_time
     from models import (
         SimulationRequest, SpareFeasibilityRequest, AirportClosureModel,
-        SpareDeploymentModel, CopilotRequest, ComparisonRequest
+        SpareDeploymentModel, CopilotRequest, ComparisonRequest,
+        ConflictCheckRequest, RecoveryOptimizationRequest
     )
 
 app = FastAPI(
     title="DOMINO SKY API",
     description="Deterministic Aviation Operations & Disruption Simulator",
-    version="2.0.0"
+    version="2.1.0"
 )
 
 # Enable CORS for frontend Vite development & local hosting
@@ -47,6 +51,7 @@ def health_check():
     return {
         "status": "ONLINE",
         "service": "DOMINO SKY OCC Backend",
+        "version": "2.1.0",
         "airports_count": len(engine.airports),
         "flights_count": len(engine.base_flights),
         "crews_count": len(engine.crews),
@@ -104,6 +109,27 @@ def get_scenario_presets():
             "default_sim_minute": 480 # 08:00 IST
         },
         {
+            "id": "simultaneous_dual_hub",
+            "name": "Simultaneous Dual-Hub Disruption (BOM + DEL)",
+            "description": "Simultaneous convective storms at Mumbai (08:30–10:00) and Delhi (09:00–10:30). Demonstrates compounding cross-hub delay propagation.",
+            "closures": [
+                {
+                    "airport_id": "BOM",
+                    "start_minute": time_to_minutes("08:30"),
+                    "end_minute": time_to_minutes("10:00"),
+                    "reason": "Severe Monsoon Thunderstorm"
+                },
+                {
+                    "airport_id": "DEL",
+                    "start_minute": time_to_minutes("09:00"),
+                    "end_minute": time_to_minutes("10:30"),
+                    "reason": "Heavy Hailstorm & Windshear"
+                }
+            ],
+            "manual_delays": {},
+            "default_sim_minute": 570 # 09:30 IST
+        },
+        {
             "id": "blr_afternoon_squall",
             "name": "Bengaluru (BLR) Convective Squall Line",
             "description": "Kempegowda Intl (BLR) closed 13:00–14:30 (90 mins). Disrupts southern connector flights, threatening 5 passenger connection banks.",
@@ -157,7 +183,9 @@ def run_simulation(req: SimulationRequest):
         manual_delays=req.manual_delays,
         deployments=deployments,
         cancelled_flight_ids=req.cancelled_flights,
-        current_sim_minute=req.current_sim_minute
+        current_sim_minute=req.current_sim_minute,
+        enforce_runway_capacity=req.enforce_runway_capacity,
+        max_holding_fuel_minutes=req.max_holding_fuel_minutes
     )
 
     # Attach AI briefing
@@ -239,6 +267,47 @@ def compare_scenarios(req: ComparisonRequest):
         cancelled_flight_ids=req.cancelled_flights,
         current_sim_minute=req.current_sim_minute
     )
+
+@app.post("/api/recovery/optimize")
+def optimize_recovery(req: RecoveryOptimizationRequest):
+    closures = [
+        AirportClosure(airport_id=c.airport_id, start_minute=c.start_minute, end_minute=c.end_minute, reason=c.reason)
+        for c in req.closures
+    ]
+    plans = engine.optimize_recovery_plans(
+        closures=closures,
+        manual_delays=req.manual_delays,
+        current_sim_minute=req.current_sim_minute,
+        cost_delay_per_min=req.cost_delay_per_min,
+        cost_cancellation=req.cost_cancellation,
+        cost_broken_pax=req.cost_broken_pax,
+        cost_spare_deployment=req.cost_spare_deployment,
+        cost_ferry_per_min=req.cost_ferry_per_min,
+        cost_crew_violation=req.cost_crew_violation
+    )
+    return {"plans": plans}
+
+@app.post("/api/recovery/conflicts")
+def check_conflicts(req: ConflictCheckRequest):
+    closures = [
+        AirportClosure(airport_id=c.airport_id, start_minute=c.start_minute, end_minute=c.end_minute, reason=c.reason)
+        for c in req.closures
+    ]
+    deployments = [
+        SpareDeployment(spare_tail=d.spare_tail, target_flight_id=d.target_flight_id, replace_remaining_rotation=d.replace_remaining_rotation, assumed_reposition_minutes=d.assumed_reposition_minutes, notes=d.notes or "")
+        for d in req.deployments
+    ]
+    conflicts = engine.detect_recovery_conflicts(
+        deployments=deployments,
+        cancelled_flight_ids=req.cancelled_flights,
+        closures=closures
+    )
+    return {"has_conflicts": len(conflicts) > 0, "conflicts": conflicts}
+
+@app.get("/api/simulation/facts")
+def get_simulation_facts(sim_minute: int = 720):
+    sim_res = engine.simulate(current_sim_minute=sim_minute)
+    return {"facts": sim_res.get("simulation_facts", {})}
 
 if __name__ == "__main__":
     import uvicorn
